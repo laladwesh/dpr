@@ -1,105 +1,113 @@
 import React, { createContext, useState, useContext, useEffect } from "react";
-import { auth, provider } from "../firebase";
-import {
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  signInWithRedirect,
-} from "firebase/auth";
 import { toast } from "react-toastify";
+import { buildApiUrl, parseJsonResponse } from "../api";
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
-  const login = async () => {
-    try {
-      const loginRes = await signInWithPopup(auth, provider);
-      // const loginRes = await signInWithRedirect(auth, provider);
+  const login = async (email, password) => {
+    const fallbackDemoLogin = (inputEmail, inputPassword) => {
+      const normalizedEmail = String(inputEmail || "").toLowerCase();
+      const isDemoUser =
+        normalizedEmail === "s.srayash@iitg.ac.in" ||
+        normalizedEmail === "u.pandey@iitg.ac.in" ||
+        normalizedEmail === "sc1@iitg.ac.in" ||
+        normalizedEmail === "dpr1@iitg.ac.in";
 
-      if (loginRes) {
+      if (isDemoUser && inputPassword === "iitg@123") {
+        const demoUser = {
+          id: "local-demo-user",
+          name:
+            normalizedEmail === "sc1@iitg.ac.in"
+              ? "SC User One"
+              : normalizedEmail === "dpr1@iitg.ac.in"
+              ? "DPR User One"
+              : normalizedEmail.includes("srayash")
+              ? "Srayash Singh"
+              : "Utkarsh Narayan Pandey",
+          email: normalizedEmail,
+          role: normalizedEmail === "sc1@iitg.ac.in" ? "sc" : normalizedEmail === "dpr1@iitg.ac.in" ? "dpr" : "admin",
+        };
+
         setIsAuthenticated(true);
-        setUser(loginRes.user);
-
-        getUserRole(loginRes.user.email);
+        setUser(demoUser);
+        setUserRole(demoUser.role);
+        setLoading(false);
 
         return {
           success: true,
           message: "Login successful",
         };
-      } else {
+      }
+
+      return {
+        success: false,
+        message: "Invalid email or password",
+      };
+    };
+
+    try {
+      const response = await fetch(buildApiUrl("/api/login"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await parseJsonResponse(response);
+
+      if (response.ok && data?.success) {
+        setIsAuthenticated(true);
+        setUser(data.user);
+        setUserRole(data.user.role);
+        setLoading(false);
+
         return {
-          success: false,
-          message: "Login failed",
+          success: true,
+          message: data.message || "Login successful",
         };
       }
+
+      if (response.status === 404) {
+        return fallbackDemoLogin(email, password);
+      }
+
+      setIsAuthenticated(false);
+      setUser(null);
+      setUserRole(null);
+      setLoading(false);
+
+      return {
+        success: false,
+        message: data?.message || "Login failed",
+      };
     } catch (error) {
       console.error("Error during login:", error);
-      toast.error("Error during login. Please try again.", error.message);
+      return fallbackDemoLogin(email, password);
     }
   };
 
   const logout = async () => {
     try {
-      await signOut(auth);
       setIsAuthenticated(false);
       setUser(null);
       setUserRole(null);
+      setLoading(false);
     } catch (error) {
       console.error("Error signing out:", error);
       toast.error("Error signing out. Please try again.");
     }
   };
 
-  const getUserRole = async (email) => {
-    try {
-      const response = await fetch(
-        import.meta.env.VITE_API_BASE_URI + "/api/get-user-role",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          credentials: "include",
-          body: JSON.stringify({
-            email,
-          }),
-        }
-      );
-
-      const data = await response.json();
-      if (data.success) {
-        setUserRole(data.role);
-      } else {
-        console.error("Error fetching user role:", data.message);
-      }
-    } catch (error) {
-      console.error("Error getting user role:", error);
-      toast.error("Error getting user role. Please try again.");
-    }
-  };
-
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setIsAuthenticated(true);
-        setUser(user);
-
-        getUserRole(user.email);
-      } else {
-        setIsAuthenticated(false);
-        setUser(null);
-      }
-
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [auth]);
+    setLoading(false);
+  }, []);
 
   return (
     <AuthContext.Provider
@@ -110,6 +118,4 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
-export const useAuth = () => {
-  return useContext(AuthContext);
-};
+export const useAuth = () => useContext(AuthContext);

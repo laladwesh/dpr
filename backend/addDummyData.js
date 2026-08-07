@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import mongoose from "mongoose";
 import Company from "./src/models/company.model.js"; // update path as needed
 
-const MONGODB_URI = "mongodb+srv://user1:user1@cluster1.fh1zcnp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster1";
+const MONGODB_URI = "mongodb://localhost:27017/test";
   //"mongodb+srv://ramdhankumar1425:rk8ceqhdh800@cluster0.hgvo9.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 
 const companies = [

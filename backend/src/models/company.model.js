@@ -7,6 +7,11 @@ const companySchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    scEmail: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     name: {
       type: String,
       required: true,

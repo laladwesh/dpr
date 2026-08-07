@@ -5,7 +5,7 @@ import { faSignOutAlt } from "@fortawesome/free-solid-svg-icons";
 import { useAuth } from "../context/AuthProvider";
 
 const Navbar = () => {
-  const { logout } = useAuth();
+  const { logout, userRole } = useAuth();
 
   return (
     <nav className="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200 shadow-sm">
@@ -29,12 +29,14 @@ const Navbar = () => {
 
       {/* Buttons */}
       <div className="flex items-center gap-3">
-        <Link
-          to="/form"
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 transition-all shadow"
-        >
-          Add Data
-        </Link>
+        {(userRole === "admin" || userRole === "dpr") && (
+          <Link
+            to="/form"
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 transition-all shadow"
+          >
+            Add Data
+          </Link>
+        )}
         <button
           onClick={logout}
           className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all shadow"

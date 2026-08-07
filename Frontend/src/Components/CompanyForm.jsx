@@ -1,8 +1,10 @@
 import React, { useState } from "react";
 import { toast } from "react-toastify";
 import { useAuth } from "../context/AuthProvider";
+import { buildApiUrl, parseJsonResponse } from "../api";
 
 const CompanyForm = () => {
+  const { user, userRole } = useAuth();
   const [companies, setCompanies] = useState([
     {
       name: "",
@@ -10,8 +12,6 @@ const CompanyForm = () => {
       pocs: [{ name: "", email: "", phone: "", remarks: "" }],
     },
   ]);
-  const { user } = useAuth();
-
   const handleCompanyChange = (index, field, value) => {
     const updated = [...companies];
     updated[index][field] = value;
@@ -76,22 +76,24 @@ const CompanyForm = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    try {
-      const response = await fetch(
-        import.meta.env.VITE_API_BASE_URI + "/api/add-companies",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            email: user.email,
-            companies: companies,
-          }),
-        }
-      );
+    if (userRole === "sc") {
+      toast.error("SC users cannot add companies.");
+      return;
+    }
 
-      const data = await response.json();
+    try {
+      const response = await fetch(buildApiUrl("/api/add-companies"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: user?.email || "developer@local",
+          companies: companies,
+        }),
+      });
+
+      const data = await parseJsonResponse(response);
       if (response.ok) {
         toast.success("Form submitted successfully!");
         setCompanies([
@@ -101,9 +103,8 @@ const CompanyForm = () => {
             pocs: [{ name: "", email: "", phone: "", remarks: "" }],
           },
         ]);
-      }
-      if (data.error) {
-        toast.error(data.error);
+      } else {
+        toast.error(data?.message || data?.error || "Failed to submit form.");
       }
     } catch (error) {
       console.error("Error submitting form:", error);

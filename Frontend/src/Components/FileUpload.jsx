@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { useAuth } from "../context/AuthProvider";
+import { buildApiUrl } from "../api";
 
 const FileUpload = () => {
   const { user } = useAuth();
@@ -27,13 +28,13 @@ const FileUpload = () => {
 
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("email", user.email);
+    formData.append("email", user?.email || "developer@local");
 
     setIsUploading(true);
     setError(null);
 
     try {
-      const response = await axios.post(import.meta.env.VITE_API_BASE_URI + "/api/add-company-with-file", formData, {
+      const response = await axios.post(buildApiUrl("/api/add-company-with-file"), formData, {
         withCredentials: true,
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -42,7 +43,7 @@ const FileUpload = () => {
 
       setUploadStatus({
         success: true,
-        message: response.data.message,
+        message: response.data?.message || "Upload completed successfully",
       });
       setUploadedCompanies(response.data.companies || []);
       setFile(null);

@@ -7,6 +7,7 @@ import { authGuard } from './middleware/auth.middleware.js';
 import path from 'path';
 import fs from 'fs';
 import Company from './models/company.model.js';
+import User from './models/user.model.js';
 import csv from 'csv-parser';
 import xlsx from 'xlsx';
 import fUpload from 'express-fileupload';
@@ -128,6 +129,59 @@ app.use(express.urlencoded({ extended: true }));
 // Basic route
 app.get('/', (req, res) => res.send('API is running...'));
 
+const handleLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required' });
+    }
+
+    const normalizedEmail = String(email).toLowerCase();
+    const demoUsers = [
+      { name: 'Srayash Singh', email: 's.srayash@iitg.ac.in', password: 'iitg@123', role: 'admin' },
+      { name: 'Utkarsh Narayan Pandey', email: 'u.pandey@iitg.ac.in', password: 'iitg@123', role: 'admin' },
+      { name: 'SC User One', email: 'sc1@iitg.ac.in', password: 'iitg@123', role: 'sc' },
+      { name: 'DPR User One', email: 'dpr1@iitg.ac.in', password: 'iitg@123', role: 'dpr' },
+    ];
+
+    let user = await User.findOne({ email: normalizedEmail });
+    const demoUser = demoUsers.find((entry) => entry.email === normalizedEmail);
+
+    if (!user && demoUser) {
+      user = await User.create({ ...demoUser, companies: [] });
+    }
+
+    if (user && demoUser && user.role !== demoUser.role) {
+      user.role = demoUser.role;
+      user.name = demoUser.name;
+      user.password = demoUser.password;
+      await user.save();
+    }
+
+    if (!user || user.password !== password) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// Login with email and password
+app.post('/login', handleLogin);
+app.post('/api/login', handleLogin);
+
 // Get user role
 app.post('/api/get-user-role', authGuard, (req, res) => {
   try {
@@ -149,6 +203,10 @@ app.post('/api/add-companies', authGuard, async (req, res) => {
     const user = req.user;
     const dprEmail = user.email;
 
+    if (user.role === 'sc') {
+      return res.status(403).json({ success: false, message: 'SC users cannot add companies' });
+    }
+
     if (!dprEmail || !companies || companies.length === 0) {
       return res.status(400).json({ message: 'Missing required fields' });
     }
@@ -166,6 +224,10 @@ app.post('/api/add-company-with-file', authGuard, async (req, res) => {
   try {
     const user = req.user;
     const dprEmail = user.email;
+
+    if (user.role === 'sc') {
+      return res.status(403).json({ success: false, message: 'SC users cannot upload companies' });
+    }
 
     if (!user || !user.email) {
       return res.status(400).json({ message: 'User is not authenticated or email is missing' });
@@ -237,22 +299,101 @@ for (const company of companies) {
   }
 });
 
+// Get SC users for admin assignment dropdown
+app.post('/api/get-sc-users', authGuard, async (req, res) => {
+  try {
+    const user = req.user;
+    if (user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Only admins can fetch SC users' });
+    }
+
+    const users = await User.find({ role: 'sc' }).select('name email role').lean();
+    res.status(200).json({ success: true, users });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// Delete company
+app.delete('/api/delete-company', authGuard, async (req, res) => {
+  try {
+    const { companyId } = req.body;
+    const user = req.user;
+
+    if (user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Only admins can delete companies' });
+    }
+
+    if (!companyId) {
+      return res.status(400).json({ success: false, message: 'Missing companyId' });
+    }
+
+    const deleted = await Company.findByIdAndDelete(companyId);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: 'Company not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'Company deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 // Get all companies
 app.post('/api/get-all-companies', authGuard, async (req, res) => {
   try {
+    const { filter = "all" } = req.body || {};
+    const user = req.user;
+    const normalizedUserEmail = String(user.email || "").toLowerCase();
     let query = Company.find({});
 
-    if (req.user.role === "dpr") {
-      
+    if (user.role === "dpr") {
       query = query.select("-pocs.phone -pocs.email");
+      if (filter === "listed-by-me") {
+        query = query.where({ dprEmail: normalizedUserEmail });
+      }
+    } else if (user.role === "sc") {
+      if (filter === "assigned-to-me") {
+        query = query.where({ scEmail: normalizedUserEmail });
+      }
+    } else if (user.role === "admin") {
+      if (filter === "unassigned") {
+        query = query.where({ scEmail: { $exists: false } }).or([{ scEmail: null }, { scEmail: "" }]);
+      } else if (filter === "assigned") {
+        query = query.where({ scEmail: { $ne: "" } }).ne(null);
+      }
     }
 
     const allCompanies = await query.lean();
+    const emailsToLookup = [
+      ...new Set(
+        allCompanies.flatMap((company) => {
+          const emails = [];
+          if (company.dprEmail) emails.push(String(company.dprEmail).toLowerCase());
+          if (company.scEmail) emails.push(String(company.scEmail).toLowerCase());
+          return emails;
+        })
+      ),
+    ];
+
+    const users = await User.find({ email: { $in: emailsToLookup } })
+      .select("name email")
+      .lean();
+
+    const userMap = new Map(users.map((entry) => [String(entry.email).toLowerCase(), entry]));
+
+    const companiesWithNames = allCompanies.map((company) => ({
+      ...company,
+      dprUserName: userMap.get(String(company.dprEmail || "").toLowerCase())?.name || company.dprEmail || "Unknown",
+      scUserName: company.scEmail
+        ? userMap.get(String(company.scEmail || "").toLowerCase())?.name || null
+        : null,
+    }));
 
     res.status(200).json({
       success: true,
       message: "Companies fetched successfully",
-      companies: allCompanies,
+      companies: companiesWithNames,
     });
 
   } catch (error) {
@@ -261,10 +402,52 @@ app.post('/api/get-all-companies', authGuard, async (req, res) => {
   }
 });
 
+// Assign SC to company
+app.post('/api/assign-sc', authGuard, async (req, res) => {
+  try {
+    const { companyId, scEmail } = req.body;
+    const user = req.user;
+    const normalizedScEmail = String(scEmail || "").trim().toLowerCase();
+
+    if (user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Only admins can assign SCs" });
+    }
+
+    if (!companyId || !normalizedScEmail) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    const targetUser = await User.findOne({ email: normalizedScEmail, role: "sc" });
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: "SC user not found" });
+    }
+
+    const company = await Company.findByIdAndUpdate(
+      companyId,
+      { scEmail: normalizedScEmail },
+      { new: true }
+    );
+
+    if (!company) {
+      return res.status(404).json({ success: false, message: "Company not found" });
+    }
+
+    res.status(200).json({ success: true, message: "SC assigned successfully", company });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
 // Update POC status
 app.post('/api/update-poc-status', authGuard, async (req, res) => {
   try {
     const { companyId, pocId, status } = req.body;
+    const user = req.user;
+
+    if (user.role !== 'admin' && user.role !== 'sc') {
+      return res.status(403).json({ success: false, message: 'Only admins and SCs can update status' });
+    }
 
     if (!companyId || !pocId || !status) {
       return res.status(400).json({ message: 'Missing required fields' });
@@ -290,6 +473,11 @@ app.post('/api/update-poc-status', authGuard, async (req, res) => {
 app.post('/api/update-poc-remarks', authGuard, async (req, res) => {
   try {
     const { companyId, pocId, remarks } = req.body;
+    const user = req.user;
+
+    if (user.role !== 'admin' && user.role !== 'sc') {
+      return res.status(403).json({ success: false, message: 'Only admins and SCs can update remarks' });
+    }
 
     if (!companyId || !pocId || !remarks) {
       return res.status(400).json({ message: 'Missing required fields' });

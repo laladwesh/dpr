@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ChevronDown, Edit2, Mail, Search, Phone, Building } from "lucide-react";
 import { useAuth } from "../context/AuthProvider";
 import { toast } from "react-toastify";
 import Loader from "./Loader";
+import { buildApiUrl, parseJsonResponse } from "../api";
 
 export default function CompanyPortal() {
   const { user, userRole, isAuthenticated } = useAuth();
@@ -10,44 +11,106 @@ export default function CompanyPortal() {
   const [filteredCompanies, setFilteredCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [scUsers, setScUsers] = useState([]);
 
   // map to store companies with same dprEmail
   const companiesMap = new Map();
   filteredCompanies.forEach((company) => {
-    const dprEmail = company.dprEmail;
+    const dprEmail = company.dprEmail || "";
+    const key = dprEmail.toLowerCase();
 
-    if (companiesMap.has(dprEmail)) {
-      companiesMap.set(dprEmail, [...companiesMap.get(dprEmail), company]);
+    if (companiesMap.has(key)) {
+      companiesMap.set(key, [...companiesMap.get(key), company]);
     } else {
-      companiesMap.set(dprEmail, [company]);
+      companiesMap.set(key, [company]);
     }
   });
 
-  // function to fetch all the companies from api
-  const fetchAllCompanies = async () => {
-    try {
-      const Response = await fetch(
-        import.meta.env.VITE_API_BASE_URI + "/api/get-all-companies",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            email: user?.email,
-          }),
-        }
-      );
-      const { message, companies } = await Response.json();
+  const matchesRoleFilter = useCallback(
+    (company) => {
+      const normalizedUserEmail = (user?.email || "").toLowerCase();
 
-      if (Response.status !== 200) {
+      if (userRole === "dpr") {
+        if (filter === "listed-by-me") {
+          return (company.dprEmail || "").toLowerCase() === normalizedUserEmail;
+        }
+        return true;
+      }
+
+      if (userRole === "sc") {
+        if (filter === "assigned-to-me") {
+          return (company.scEmail || "").toLowerCase() === normalizedUserEmail;
+        }
+        return true;
+      }
+
+      if (userRole === "admin") {
+        if (filter === "unassigned") {
+          return !company.scEmail || company.scEmail.trim() === "";
+        }
+        if (filter === "assigned") {
+          return Boolean(company.scEmail && company.scEmail.trim() !== "");
+        }
+        return true;
+      }
+
+      return true;
+    },
+    [filter, user?.email, userRole]
+  );
+
+  const matchesStatusFilter = useCallback(
+    (company) => {
+      if (statusFilter === "all") return true;
+
+      const normalizedStatuses = (company.pocs || []).map((poc) =>
+        (poc.status || "").toLowerCase()
+      );
+
+      if (statusFilter === "pending") {
+        return normalizedStatuses.some((status) =>
+          ["yet to contact", "pending", "in progress", "follow up"].includes(status)
+        );
+      }
+
+      if (statusFilter === "contacted") {
+        return normalizedStatuses.some((status) =>
+          ["contacted", "interested", "positive", "done", "followed up"].includes(status)
+        );
+      }
+
+      return true;
+    },
+    [statusFilter]
+  );
+
+  // function to fetch all the companies from api
+  const fetchAllCompanies = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(buildApiUrl("/api/get-all-companies"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: user?.email || "developer@local",
+          filter,
+        }),
+      });
+      const data = await parseJsonResponse(response);
+      const message = data?.message;
+      const companies = data?.companies || [];
+
+      if (response.status !== 200) {
         console.error("Error fetching companies:", message);
         toast.error("Error fetching companies. Please try again later.");
         return;
       }
       if (companies.length === 0) {
         console.log("No companies found for this user.");
-        toast.info("No companies found for this user.");
         return;
       }
       if (companies.length > 0) {
@@ -60,62 +123,94 @@ export default function CompanyPortal() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filter, user?.email]);
 
-  // filter the companies based on the search query
   useEffect(() => {
     const filtered = companies.filter((company) => {
-      if (searchQuery === "") return true;
       const lowerCaseQuery = searchQuery.toLowerCase();
-
-      const lowerCaseDprEmail = company.dprEmail.toLowerCase();
-      const lowerCaseCompanyName = company.name.toLowerCase();
-      const lowerCaseProfiles = company.profiles.map((profile) =>
+      const lowerCaseDprEmail = (company.dprEmail || "").toLowerCase();
+      const lowerCaseCompanyName = (company.name || "").toLowerCase();
+      const lowerCaseProfiles = (company.profiles || []).map((profile) =>
         profile.toLowerCase()
       );
       let lowerCasePOCs = [];
-      let lowerCasePOCEmails =[];
-      if(userRole === 'admin') {
-      lowerCasePOCEmails = company.pocs.map((poc) =>
-        poc.email.toLowerCase()
-      );
-      lowerCasePOCs = company.pocs.map((poc) => poc.name.toLowerCase());
+      let lowerCasePOCEmails = [];
+
+      if (userRole === "admin") {
+        lowerCasePOCEmails = (company.pocs || []).map((poc) =>
+          (poc.email || "").toLowerCase()
+        );
+        lowerCasePOCs = (company.pocs || []).map((poc) => (poc.name || "").toLowerCase());
       }
-      const lowerCasePOCStatus = company.pocs.map((poc) =>
-        poc.status.toLowerCase()
+
+      const lowerCasePOCStatus = (company.pocs || []).map((poc) =>
+        (poc.status || "").toLowerCase()
       );
 
-      return (
+      const matchesSearch =
+        searchQuery === "" ||
         lowerCaseDprEmail.includes(lowerCaseQuery) ||
         lowerCaseCompanyName.includes(lowerCaseQuery) ||
         lowerCaseProfiles.some((profile) => profile.includes(lowerCaseQuery)) ||
         lowerCasePOCs.some((poc) => poc.includes(lowerCaseQuery)) ||
         lowerCasePOCEmails.some((email) => email.includes(lowerCaseQuery)) ||
-        lowerCasePOCStatus.some((status) => status.includes(lowerCaseQuery))
-      );
+        lowerCasePOCStatus.some((status) => status.includes(lowerCaseQuery));
+
+      return matchesSearch && matchesRoleFilter(company) && matchesStatusFilter(company);
     });
 
     setFilteredCompanies(filtered);
-  }, [searchQuery, companies]);
+  }, [searchQuery, companies, userRole, filter, statusFilter, user?.email, matchesRoleFilter, matchesStatusFilter]);
 
-  // fetch all the companies on page load
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchAllCompanies();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, filter, user?.email, fetchAllCompanies]);
+
+  const loadScUsers = useCallback(async () => {
+    if (userRole !== "admin") return;
+
+    try {
+      const response = await fetch(buildApiUrl("/api/get-sc-users"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user?.email || "developer@local" }),
+      });
+      const data = await parseJsonResponse(response);
+      if (data?.success) {
+        setScUsers(data.users || []);
+      } else {
+        setScUsers([]);
+      }
+    } catch (error) {
+      console.error("Failed to load SC users", error);
+      setScUsers([]);
+    }
+  }, [user?.email, userRole]);
+
+  useEffect(() => {
+    loadScUsers();
+  }, [loadScUsers]);
 
   if (loading) return <Loader loading={loading} />;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 bg-gray-50">
-      <div className="mb-8">
-        <h1 className="text-2xl font-medium text-gray-800 mb-2">Company Portal</h1>
-        <p className="text-gray-600">Manage your company points of contact and profiles</p>
+      <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-800">Company Portal</h1>
+            <p className="text-gray-600">Welcome back, {user?.name || "there"}. Manage your companies, follow-ups, and assignments.</p>
+          </div>
+          <div className="rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
+            {filteredCompanies.length} company{filteredCompanies.length === 1 ? "" : "ies"} shown
+          </div>
+        </div>
       </div>
       
-      <div className="w-full mb-6 relative">
-        <div className="bg-white rounded-lg shadow-sm flex items-center relative overflow-hidden">
-          <Search className="absolute left-4 text-gray-400" size={20} />
+      <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center relative overflow-hidden flex-1">
+          <Search className="absolute left-4 text-gray-500" size={20} />
           <input
             type="text"
             name="query"
@@ -125,23 +220,89 @@ export default function CompanyPortal() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
+
+        {(userRole === "dpr" || userRole === "sc" || userRole === "admin") && (
+          <div className="flex flex-wrap items-center gap-2">
+            {userRole === "dpr" && (
+              <select
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-700 shadow-sm"
+              >
+                <option value="all" className="text-gray-800">All Companies</option>
+                <option value="listed-by-me" className="text-gray-800">Listed by me</option>
+              </select>
+            )}
+
+            {userRole === "sc" && (
+              <select
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-700 shadow-sm"
+              >
+                <option value="all" className="text-gray-800">All Companies</option>
+                <option value="assigned-to-me" className="text-gray-800">Assigned to me</option>
+              </select>
+            )}
+
+            {userRole === "admin" && (
+              <select
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-700 shadow-sm"
+              >
+                <option value="all" className="text-gray-800">All Companies</option>
+                <option value="unassigned" className="text-gray-800">Unassigned</option>
+                <option value="assigned" className="text-gray-800">Assigned</option>
+              </select>
+            )}
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-700 shadow-sm"
+            >
+              <option value="all" className="text-gray-800">All statuses</option>
+              <option value="pending" className="text-gray-800">Pending follow-up</option>
+              <option value="contacted" className="text-gray-800">Contacted / positive</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={() => {
+                setFilter("all");
+                setStatusFilter("all");
+                setSearchQuery("");
+              }}
+              className="px-3 py-2 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 shadow-sm hover:bg-gray-50"
+            >
+              Reset
+            </button>
+          </div>
+        )}
       </div>
       
       <div className="flex flex-col space-y-4 w-full min-h-screen">
         {Array.from(companiesMap).length > 0 ? (
-          Array.from(companiesMap).map(([dprEmail, companies], index) => {
+          Array.from(companiesMap).map(([dprKey, companies], index) => {
+            const firstCompany = companies[0] || {};
+            const displayName = firstCompany.dprUserName || firstCompany.dprEmail || "Unknown user";
+            const displayEmail = firstCompany.dprEmail || dprKey;
+
             return (
               <DPR
-                email={dprEmail}
+                email={displayEmail}
+                displayName={displayName}
                 companies={companies}
                 setCompanies={setCompanies}
                 userRole={userRole}
+                scUsers={scUsers}
                 key={index}
               />
             );
           })
         ) : (
-          <div className="flex flex-col items-center justify-center py-16 text-gray-500">
+          <div className="flex flex-col items-center justify-center py-16 text-gray-500 rounded-2xl border border-dashed border-gray-200 bg-white">
             <Building size={48} />
             <p className="mt-4">No companies found. Try adjusting your search.</p>
           </div>
@@ -151,20 +312,25 @@ export default function CompanyPortal() {
   );
 }
 
-function DPR({ email, companies, setCompanies, userRole }) {
+function DPR({ email, displayName, companies, setCompanies, userRole, scUsers }) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className="bg-white shadow-sm rounded-lg overflow-hidden border border-gray-100">
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
       <div
         className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
         onClick={() => setIsOpen(!isOpen)}
       >
         <div className="flex items-center">
-          <Mail size={18} className="text-blue-600 mr-3" />
-          <h2 className="text-lg font-medium text-gray-800">
-            {email}
-          </h2>
+          <div className="mr-3 rounded-full bg-blue-50 p-2 text-blue-600">
+            <Mail size={18} />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-gray-800">
+              {displayName || email}
+            </h2>
+            <p className="text-sm text-gray-500">{email}</p>
+          </div>
         </div>
         <button
           className={`p-2 rounded-full hover:bg-gray-100 transition-all ${
@@ -188,8 +354,11 @@ function DPR({ email, companies, setCompanies, userRole }) {
               pocs={company.pocs}
               profiles={company.profiles}
               id={company._id}
+              currentScEmail={company.scEmail}
+              currentScName={company.scUserName || null}
               setCompanies={setCompanies}
               userRole={userRole}
+              scUsers={scUsers}
             />
           ))}
         </div>
@@ -198,28 +367,25 @@ function DPR({ email, companies, setCompanies, userRole }) {
   );
 }
 
-function Company({ name, profiles, pocs, id, setCompanies, userRole }) {
+function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setCompanies, userRole, scUsers }) {
   const { user } = useAuth();
 
   const updatePOCStatus = async (pocId, status) => {
-    if (userRole !== "admin") return;
+    if (userRole !== "admin" && userRole !== "sc") return;
     try {
-      const response = await fetch(
-        import.meta.env.VITE_API_BASE_URI + "/api/update-poc-status",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            email: user.email,
-            companyId: id,
-            pocId: pocId,
-            status: status,
-          }),
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(buildApiUrl("/api/update-poc-status"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: user?.email || "developer@local",
+          companyId: id,
+          pocId: pocId,
+          status: status,
+        }),
+      });
+      const data = await parseJsonResponse(response);
 
       if (data.success) {
         toast.success("Status updated successfully");
@@ -256,24 +422,21 @@ function Company({ name, profiles, pocs, id, setCompanies, userRole }) {
   };
 
   const updatePOCRemark = async (pocId, remarks) => {
-    if (userRole !== "admin") return;
+    if (userRole !== "admin" && userRole !== "sc") return;
     try {
-      const response = await fetch(
-        import.meta.env.VITE_API_BASE_URI + "/api/update-poc-remarks",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            email: user.email,
-            companyId: id,
-            pocId: pocId,
-            remarks: remarks,
-          }),
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(buildApiUrl("/api/update-poc-remarks"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: user?.email || "developer@local",
+          companyId: id,
+          pocId: pocId,
+          remarks: remarks,
+        }),
+      });
+      const data = await parseJsonResponse(response);
 
       if (data.success) {
         toast.success("Remarks updated successfully");
@@ -309,24 +472,51 @@ function Company({ name, profiles, pocs, id, setCompanies, userRole }) {
     }
   };
 
+  const handleAssignSc = async (event) => {
+    const selectedScEmail = event.target.value;
+    const normalizedScEmail = selectedScEmail ? selectedScEmail.toLowerCase() : "";
+
+    try {
+      const response = await fetch(buildApiUrl("/api/assign-sc"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user?.email || "developer@local", companyId: id, scEmail: normalizedScEmail }),
+      });
+      const data = await parseJsonResponse(response);
+
+      if (response.ok && data?.success) {
+        const assignedScUser = scUsers.find((entry) => entry.email?.toLowerCase() === normalizedScEmail);
+        toast.success("LSC assigned successfully");
+        setCompanies((prev) =>
+          prev.map((company) =>
+            company._id === id
+              ? { ...company, scEmail: normalizedScEmail, scUserName: assignedScUser?.name || null }
+              : company
+          )
+        );
+      } else {
+        toast.error(data?.message || "Failed to assign LSC");
+      }
+    } catch {
+      toast.error("Failed to assign LSC");
+    }
+  };
+
   const handleDeleteCompany = async () => {
     if (!confirm(`Are you sure you want to delete ${name}?`)) return;
 
     try {
-      const response = await fetch(
-        import.meta.env.VITE_API_BASE_URI + "/api/delete-company",
-        {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            email: user.email,
-            companyId: id,
-          }),
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(buildApiUrl("/api/delete-company"), {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: user?.email || "developer@local",
+          companyId: id,
+        }),
+      });
+      const data = await parseJsonResponse(response);
 
       if (data.success) {
         toast.success("Company deleted successfully");
@@ -334,24 +524,46 @@ function Company({ name, profiles, pocs, id, setCompanies, userRole }) {
       } else {
         toast.error(data.message || "Failed to delete company");
       }
-    } catch (error) {
+    } catch {
       toast.error("Network request failed");
     }
   };
 
   return (
-    <div className="bg-gray-50 rounded-lg border border-gray-100 overflow-hidden">
-     <div className="px-5 py-4 border-b border-gray-100 bg-gray-100 flex justify-between items-center">
-        <h3 className="text-lg font-medium text-gray-800">{name}</h3>
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
+     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-5 py-4">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-800">{name}</h3>
+          <div className="mt-1 inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
+            Assigned to: {currentScName || (currentScEmail ? "Assigned" : "Unassigned")}
+          </div>
+        </div>
 
-        {userRole === "admin" && (
-          <button
-            onClick={() => handleDeleteCompany()}
-            className="text-red-600 text-sm hover:underline"
-          >
-            Delete Company
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {userRole === "admin" && (
+            <>
+              <select
+                value={currentScEmail || ""}
+                onChange={handleAssignSc}
+                className="px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-700 shadow-sm"
+                aria-label="Assign LSC"
+              >
+                <option value="" className="text-gray-800">Unassigned</option>
+                {scUsers.map((scUser) => (
+                  <option key={scUser.email} value={scUser.email} className="text-gray-800">
+                    {scUser.name} ({scUser.email})
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => handleDeleteCompany()}
+                className="text-red-600 text-sm hover:underline"
+              >
+                Delete Company
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
 
@@ -441,7 +653,7 @@ function POC({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="md:w-2/5">
           <div className="font-medium text-gray-800 mb-1">{name}</div>
-          {userRole === 'admin' && (<div className="flex items-center gap-4 text-sm text-gray-600">
+          {(userRole === 'admin' || userRole === 'sc') && (<div className="flex items-center gap-4 text-sm text-gray-600">
             <a
               href={`mailto:${email}`}
               className="flex items-center gap-1 hover:text-blue-600 transition-colors"
@@ -466,7 +678,7 @@ function POC({
             value={status}
             className={`text-sm px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 border border-gray-200 ${statusColors[status]} cursor-pointer w-full transition-colors`}
             onChange={(e) => updateStatus(id, e.target.value)}
-            disabled={userRole !== "admin"}
+            disabled={userRole !== "admin" && userRole !== "sc"}
           >
             <option value="yet to contact">Yet to contact</option>
             <option value="ongoing">Ongoing</option>
@@ -494,7 +706,7 @@ function POC({
             )}
           </div>
 
-          {userRole === "admin" && (
+          {(userRole === "admin" || userRole === "sc") && (
             <div className="ml-4 flex items-center">
               {isEditing ? (
                 <div className="flex flex-col gap-2">

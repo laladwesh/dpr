@@ -1,11 +1,6 @@
-// Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
 import { getAuth, OAuthProvider } from "firebase/auth";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
 
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -16,9 +11,28 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const provider = new OAuthProvider("microsoft.com");
+const hasFirebaseConfig = Boolean(
+  firebaseConfig.apiKey &&
+    firebaseConfig.authDomain &&
+    firebaseConfig.projectId
+);
+
+let auth = null;
+let provider = null;
+
+if (hasFirebaseConfig) {
+  try {
+    const app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    provider = new OAuthProvider("microsoft.com");
+  } catch (error) {
+    console.warn("Firebase auth disabled for local development:", error.message);
+  }
+}
+
+if (!auth) {
+  auth = { currentUser: null };
+  provider = { providerId: "microsoft.com" };
+}
 
 export { auth, provider };

@@ -16,7 +16,7 @@ function HomePage() {
     if (!isAuthenticated) {
       navigate("/login");
     }
-  }, [isAuthenticated, loading]);
+  }, [isAuthenticated, loading, navigate]);
 
   if (loading) return <Loader loading={loading} />;
 

@@ -2,7 +2,7 @@ import User from "../models/user.model.js";
 
 export const authGuard = async (req, res, next) => {
   try {
-    const { email } = req.body;
+    const email = String(req.body?.email || "").trim().toLowerCase();
 
     if (!email) {
       return res.status(400).json({
