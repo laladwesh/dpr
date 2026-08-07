@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.jsx";
 import LoginPage from "./LoginPage.jsx";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthProvider.jsx";
 import Homepage from "./Homepage.jsx";
 import Navbar from "./Components/Navbar.jsx";
@@ -12,11 +12,13 @@ import { ToastContainer, Bounce } from "react-toastify";
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter basename={import.meta.env.VITE_BASE_URL}>
         <Routes>
-          <Route index element={<Homepage />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Homepage />} />
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/form" element={<App />} />
+          <Route path="/create" element={<App />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>
 

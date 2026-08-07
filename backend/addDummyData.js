@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import mongoose from "mongoose";
 import Company from "./src/models/company.model.js"; // update path as needed
 
-const MONGODB_URI = "mongodb://localhost:27017/test";
+const MONGODB_URI = dotenv.config().parsed?.MONGODB_URI;
   //"mongodb+srv://ramdhankumar1425:rk8ceqhdh800@cluster0.hgvo9.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 
 const companies = [
@@ -24,7 +24,7 @@ const companies = [
         name: "Nina Rao",
         email: "nina@technova.com",
         phone: "9123456780",
-        status: "done",
+        status: "onboarded",
         remarks: "Final round completed.",
       },
     ],
@@ -59,7 +59,7 @@ const companies = [
         name: "Manoj Batra",
         email: "manoj@brightbyte.io",
         phone: "9786543210",
-        status: "done",
+        status: "onboarded",
         remarks: "Sent final selections.",
       },
       {
@@ -108,7 +108,7 @@ const companies = [
         name: "Neha Desai",
         email: "neha@quantumloop.io",
         phone: "9345678901",
-        status: "done",
+        status: "onboarded",
         remarks: "All interviews wrapped up.",
       },
       {
@@ -136,7 +136,7 @@ const companies = [
         name: "Mohit Sinha",
         email: "mohit@pixelforge.games",
         phone: "9080706050",
-        status: "done",
+        status: "onboarded",
         remarks: "Shared offer letters with students.",
       },
     ],

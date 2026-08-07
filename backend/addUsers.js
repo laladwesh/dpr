@@ -1,7 +1,9 @@
+import dotenv from 'dotenv';
+
 import mongoose from "mongoose";
 import User from "./src/models/user.model.js";
 
-const MONGODB_URI = "mongodb+srv://user1:user1@cluster1.fh1zcnp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster1";
+const MONGODB_URI = dotenv.config().parsed?.MONGODB_URI;
   //"mongodb+srv://ramdhankumar1425:rk8ceqhdh800@cluster0.hgvo9.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 
 const dummyUsers = [

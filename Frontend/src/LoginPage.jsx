@@ -20,7 +20,7 @@ function LoginPage() {
     const res = await login(email, password);
 
     if (res.success) {
-      navigate("/");
+      navigate("/dashboard");
     } else {
       toast.error(res.message || "Invalid credentials");
     }
@@ -29,11 +29,11 @@ function LoginPage() {
   return (
     <div
       className="w-full h-screen flex items-center justify-center bg-cover bg-center"
-      style={{ backgroundImage: "url('./images/login-bg.jpg')" }}
+      style={{ backgroundImage: `url('${import.meta.env.BASE_URL}images/login-bg.jpg')` }}
     >
       <div className="w-96 p-8 bg-white/95 shadow-lg rounded-xl text-center font-sans">
         <img
-          src="./images/iitg-logo.png"
+          src={`${import.meta.env.BASE_URL}images/iitg-logo.png`}
           alt="IITG Logo"
           className="w-20 h-20 mx-auto mb-3"
         />

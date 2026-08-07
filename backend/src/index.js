@@ -303,8 +303,8 @@ for (const company of companies) {
 app.post('/api/get-sc-users', authGuard, async (req, res) => {
   try {
     const user = req.user;
-    if (user.role !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Only admins can fetch SC users' });
+    if (user.role !== 'admin' && user.role !== 'sc') {
+      return res.status(403).json({ success: false, message: 'Only admins and SCs can fetch SC users' });
     }
 
     const users = await User.find({ role: 'sc' }).select('name email role').lean();
@@ -409,8 +409,8 @@ app.post('/api/assign-sc', authGuard, async (req, res) => {
     const user = req.user;
     const normalizedScEmail = String(scEmail || "").trim().toLowerCase();
 
-    if (user.role !== "admin") {
-      return res.status(403).json({ success: false, message: "Only admins can assign SCs" });
+    if (user.role !== "admin" && user.role !== "sc") {
+      return res.status(403).json({ success: false, message: "Only admins and SCs can assign SCs" });
     }
 
     if (!companyId || !normalizedScEmail) {
@@ -422,17 +422,63 @@ app.post('/api/assign-sc', authGuard, async (req, res) => {
       return res.status(404).json({ success: false, message: "SC user not found" });
     }
 
-    const company = await Company.findByIdAndUpdate(
+    const company = await Company.findById(companyId);
+    if (!company) {
+      return res.status(404).json({ success: false, message: "Company not found" });
+    }
+
+    const updatedCompany = await Company.findByIdAndUpdate(
       companyId,
       { scEmail: normalizedScEmail },
       { new: true }
     );
 
+    res.status(200).json({ success: true, message: "SC assigned successfully", company: updatedCompany });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// Update company profiles
+app.post('/api/update-company-profiles', authGuard, async (req, res) => {
+  try {
+    const { companyId, profiles } = req.body;
+    const user = req.user;
+    const normalizedUserEmail = String(user.email || "").toLowerCase();
+
+    if (user.role !== "admin" && user.role !== "sc") {
+      return res.status(403).json({ success: false, message: "Only admins and SCs can update profiles" });
+    }
+
+    if (!companyId || !Array.isArray(profiles)) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    const company = await Company.findById(companyId);
     if (!company) {
       return res.status(404).json({ success: false, message: "Company not found" });
     }
 
-    res.status(200).json({ success: true, message: "SC assigned successfully", company });
+    if (user.role === "sc") {
+      const currentScEmail = String(company.scEmail || "").toLowerCase();
+      if (currentScEmail && currentScEmail !== normalizedUserEmail) {
+        return res.status(403).json({ success: false, message: "SC can only update profiles for companies assigned to them" });
+      }
+    }
+
+    const cleanedProfiles = Array.from(
+      new Set(
+        profiles
+          .map((profile) => String(profile || "").trim())
+          .filter((profile) => profile.length > 0)
+      )
+    );
+
+    company.profiles = cleanedProfiles;
+    await company.save();
+
+    res.status(200).json({ success: true, message: "Profiles updated successfully", company });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: "Internal server error" });
