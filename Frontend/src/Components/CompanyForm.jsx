@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { useAuth } from "../context/AuthProvider";
 import { buildApiUrl, parseJsonResponse } from "../api";
-import { Plus, Trash2, X, Building } from "lucide-react";
+import { Plus, Trash2, X, Building, ChevronDown, ChevronUp, Search } from "lucide-react";
 
 const CompanyForm = () => {
   const { userRole } = useAuth();
@@ -13,6 +13,35 @@ const CompanyForm = () => {
       pocs: [{ name: "", email: "", phone: "", remarks: "" }],
     },
   ]);
+  const [suggestions, setSuggestions] = useState({});
+  const [expandedSuggestion, setExpandedSuggestion] = useState(null);
+
+  useEffect(() => {
+    const timers = companies.map((company, index) => {
+      const query = company.name.trim();
+      if (query.length < 2) {
+        setSuggestions((current) => ({ ...current, [index]: [] }));
+        return null;
+      }
+
+      return setTimeout(async () => {
+        try {
+          const response = await fetch(
+            `${buildApiUrl("/api/company-suggestions")}?q=${encodeURIComponent(query)}`,
+            { credentials: "include" }
+          );
+          const data = await parseJsonResponse(response);
+          if (response.ok) {
+            setSuggestions((current) => ({ ...current, [index]: data?.companies || [] }));
+          }
+        } catch (error) {
+          console.error("Error searching companies:", error);
+        }
+      }, 300);
+    });
+
+    return () => timers.forEach((timer) => timer && clearTimeout(timer));
+  }, [companies]);
 
   const handleCompanyChange = (index, field, value) => {
     const updated = [...companies];
@@ -154,14 +183,49 @@ const CompanyForm = () => {
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
                     Company Name
                   </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Acme Corporation"
-                    value={company.name}
-                    onChange={(e) => handleCompanyChange(cIndex, "name", e.target.value)}
-                    required
-                    className="w-full rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-blue-800 focus:outline-none focus:ring-1 focus:ring-blue-800 transition-colors"
-                  />
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                    <input
+                      type="text"
+                      placeholder="e.g. Acme Corporation"
+                      value={company.name}
+                      onChange={(e) => handleCompanyChange(cIndex, "name", e.target.value)}
+                      required
+                      className="w-full rounded-md border border-slate-300 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 focus:border-blue-800 focus:outline-none focus:ring-1 focus:ring-blue-800 transition-colors"
+                    />
+                    {suggestions[cIndex]?.length > 0 && (
+                      <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
+                        <p className="border-b border-slate-100 px-3 py-2 text-xs font-semibold text-slate-500">
+                          Similar companies already listed
+                        </p>
+                        {suggestions[cIndex].map((suggestion) => {
+                          const suggestionKey = `${cIndex}-${suggestion.id}`;
+                          const isExpanded = expandedSuggestion === suggestionKey;
+                          return (
+                            <div key={suggestion.id} className="border-b border-slate-100 last:border-0">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedSuggestion(isExpanded ? null : suggestionKey)}
+                                className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-slate-50"
+                              >
+                                <span className="min-w-0 truncate text-sm font-semibold text-slate-800">{suggestion.name}</span>
+                                <span className="flex shrink-0 items-center gap-2 text-xs font-medium text-amber-700">
+                                  Already added {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                                </span>
+                              </button>
+                              {isExpanded && (
+                                <div className="bg-slate-50 px-3 pb-3 text-xs text-slate-600">
+                                  <p><strong>Listed by:</strong> {suggestion.listedBy}</p>
+                                  <p className="mt-1"><strong>Profiles:</strong> {suggestion.profiles.length ? suggestion.profiles.join(", ") : "None"}</p>
+                                  <p className="mt-1"><strong>Contacts:</strong> {suggestion.pocs.length || "None"}</p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Profiles Section */}

@@ -30,6 +30,11 @@ const __dirname = path.dirname(__filename);
 const tempDir = path.join(__dirname, '../temp');
 const allowedFiles = [".csv", ".xlsx", ".xls"];
 
+const normalizeCompanyName = (name) =>
+  String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // Create temporary directory if not exists
 if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
@@ -280,6 +285,45 @@ apiRouter.post('/api/get-user-role', authGuard, (req, res) => {
   }
 });
 
+// Search existing companies without loading the complete company list.
+apiRouter.get('/api/company-suggestions', authGuard, async (req, res) => {
+  try {
+    const query = normalizeCompanyName(req.query.q);
+    if (query.length < 2) {
+      return res.json({ success: true, companies: [] });
+    }
+
+    const matchingCompanies = await Company.find({
+      $or: [
+        { nameNormalized: { $regex: `^${escapeRegex(query)}` } },
+        { name: { $regex: `^${escapeRegex(query)}`, $options: 'i' } },
+      ],
+    })
+      .select('name nameNormalized profiles pocs dprEmail')
+      .sort({ name: 1 })
+      .limit(8)
+      .lean();
+
+    const emails = [...new Set(matchingCompanies.map((company) => company.dprEmail).filter(Boolean))];
+    const users = await User.find({ email: { $in: emails } }).select('email name').lean();
+    const userNames = new Map(users.map((user) => [user.email, user.name]));
+
+    return res.json({
+      success: true,
+      companies: matchingCompanies.map((company) => ({
+        id: company._id,
+        name: company.name,
+        profiles: company.profiles || [],
+        pocs: (company.pocs || []).map(({ name, status }) => ({ name, status })),
+        listedBy: userNames.get(company.dprEmail) || company.dprEmail || 'Unknown',
+      })),
+    });
+  } catch (error) {
+    console.error('Error searching company suggestions', error);
+    return res.status(500).json({ success: false, message: 'Unable to search companies' });
+  }
+});
+
 // Add companies from request body
 apiRouter.post('/api/add-companies', authGuard, async (req, res) => {
   try {
@@ -295,10 +339,46 @@ apiRouter.post('/api/add-companies', authGuard, async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
-    await Company.insertMany(companies.map(company => ({ ...company, dprEmail })));
+    const preparedCompanies = companies.map((company) => ({
+      ...company,
+      name: String(company.name || '').trim(),
+      nameNormalized: normalizeCompanyName(company.name),
+      dprEmail,
+    }));
+    const namesInRequest = new Set();
+    const duplicateInRequest = preparedCompanies.find((company) => {
+      if (!company.nameNormalized || namesInRequest.has(company.nameNormalized)) return true;
+      namesInRequest.add(company.nameNormalized);
+      return false;
+    });
+
+    if (duplicateInRequest) {
+      return res.status(409).json({ success: false, message: `Duplicate company: ${duplicateInRequest.name}` });
+    }
+
+    const existingCompany = await Company.findOne({
+      $or: [
+        { nameNormalized: { $in: preparedCompanies.map((company) => company.nameNormalized) } },
+        { name: { $in: preparedCompanies.map((company) => company.name) } },
+      ],
+    }).select('name').lean();
+    if (existingCompany) {
+      return res.status(409).json({
+        success: false,
+        message: `${existingCompany.name} is already listed. Please use the existing company instead.`,
+      });
+    }
+
+    await Company.insertMany(preparedCompanies);
 
     res.status(201).json({ success: true, message: 'Companies added successfully' });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: 'One of these companies was added by another user. Please search again.',
+      });
+    }
     res.status(500).json({ message: 'Internal server error' });
   }
 });

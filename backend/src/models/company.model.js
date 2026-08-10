@@ -17,6 +17,13 @@ const companySchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    nameNormalized: {
+      type: String,
+      trim: true,
+      index: true,
+      unique: true,
+      sparse: true,
+    },
     pocs: [
       {
         name: {
@@ -51,6 +58,13 @@ const companySchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+companySchema.pre("validate", function setNormalizedName(next) {
+  if (this.name) {
+    this.nameNormalized = this.name.trim().replace(/\s+/g, " ").toLowerCase();
+  }
+  next();
+});
 
 const Company = mongoose.model("Company", companySchema);
 
