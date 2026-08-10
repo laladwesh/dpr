@@ -29,6 +29,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const tempDir = path.join(__dirname, '../temp');
 const allowedFiles = [".csv", ".xlsx", ".xls"];
+const BASE_PATH = `/${(process.env.BASE_PATH || "/dpr").replace(/^\/+|\/+$/g, "")}`;
 
 const normalizeCompanyName = (name) =>
   String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
@@ -134,7 +135,7 @@ const apiRouter = express.Router();
 connectDB();
 
 // Middleware setup
-app.use('/dpr/admin', adminRouter);
+app.use(`${BASE_PATH}/admin`, adminRouter);
 app.use(fUpload({ useTempFiles: true, tempFileDir: '/tmp/' }));
 const allowedOrigins = [
   process.env.FRONTEND_URL || "http://localhost:5173",
@@ -146,13 +147,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Basic route
-app.get('/dpr/', (req, res) => res.send('API is running...'));
+app.get(`${BASE_PATH}/`, (req, res) => res.send('API is running...'));
 
 const getFrontendUrl = () =>
-  `${process.env.FRONTEND_URL || "http://localhost:5173"}${process.env.FRONTEND_BASE_PATH || "/dpr"}`;
+  `${process.env.FRONTEND_URL || "http://localhost:5173"}${process.env.FRONTEND_BASE_PATH || BASE_PATH}`;
 const getAzureRedirectUri = () =>
   process.env.AZURE_REDIRECT_URI ||
-  `${process.env.API_PUBLIC_URL || `http://localhost:${process.env.PORT || 8081}`}/dpr/api/auth/azure/callback`;
+  `${process.env.API_PUBLIC_URL || `http://localhost:${process.env.PORT || 8081}`}${BASE_PATH}/api/auth/azure/callback`;
 
 const getCookie = (req, name) => {
   const cookie = (req.headers.cookie || "")
@@ -709,7 +710,7 @@ apiRouter.post('/api/update-poc-remarks', authGuard, async (req, res) => {
   }
 });
 
-app.use('/dpr', apiRouter);
+app.use(BASE_PATH, apiRouter);
 
 const PORT = process.env.PORT || 8081;
 app.listen(PORT, '0.0.0.0', () => {

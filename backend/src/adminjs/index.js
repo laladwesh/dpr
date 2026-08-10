@@ -12,15 +12,17 @@ const MASTER_ADMIN = {
   password: process.env.MASTER_ADMIN_PASSWORD,
 };
 
+const BASE_PATH = `/${(process.env.BASE_PATH || "/dpr").replace(/^\/+|\/+$/g, "")}`;
+
 AdminJS.registerAdapter({
   Database: AdminJSMongoose.Database,
   Resource: AdminJSMongoose.Resource,
 });
 
 export const admin = new AdminJS({
-  rootPath: "/dpr/admin",
-  loginPath: "/dpr/admin/login",
-  logoutPath: "/dpr/admin/logout",
+  rootPath: `${BASE_PATH}/admin`,
+  loginPath: `${BASE_PATH}/admin/login`,
+  logoutPath: `${BASE_PATH}/admin/logout`,
   resources: [Company, User],
 });
 

@@ -14,6 +14,7 @@ ENV NODE_ENV=production
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=build /app/ .
 
-EXPOSE 5002
+ENV PORT=8081
+EXPOSE 8081
 
 CMD [ "npm", "start" ]

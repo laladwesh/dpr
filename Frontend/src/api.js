@@ -1,5 +1,5 @@
 const DEFAULT_API_BASE_URL = "http://localhost:8081";
-const API_BASE_PATH = "/dpr";
+const API_BASE_PATH = `/${(import.meta.env.VITE_BASE_URL || "/dpr/").replace(/^\/+|\/+$/g, "")}`;
 
 export const getApiBaseUrl = () => {
   const configured = import.meta.env.VITE_API_BASE_URI?.trim();
