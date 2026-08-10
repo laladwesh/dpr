@@ -193,6 +193,7 @@ apiRouter.get('/api/auth/azure', (req, res) => {
     redirect_uri: getAzureRedirectUri(),
     response_mode: 'query',
     scope: 'openid profile email',
+    prompt: 'select_account',
     state,
   });
 
