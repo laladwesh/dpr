@@ -1,26 +1,8 @@
-# Runs the frontend and backend together.
-#
-# The frontend is served at BASE_PATH (default /listing-ccd) on FRONTEND_PORT
-# (default 6026). The backend API is served at BASE_PATH/api on BACKEND_PORT
-# (default 8081). Point your own reverse proxy (IITG-side or otherwise) at
-# these two ports to publish everything under a single public host/path.
 services:
-  backend:
+  app:
     build:
-      context: ./backend
-    container_name: dpr_backend
-    restart: unless-stopped
-    env_file:
-      - ./backend/.env
-    environment:
-      PORT: ${BACKEND_PORT:-8081}
-      BASE_PATH: ${BASE_PATH_NAME:-listing-ccd}
-    ports:
-      - "${BACKEND_PORT:-8081}:${BACKEND_PORT:-8081}"
-
-  frontend:
-    build:
-      context: ./Frontend
+      context: .
+      dockerfile: Dockerfile
       args:
         VITE_BASE_URL: ${BASE_PATH_NAME:-listing-ccd}/
         VITE_API_BASE_URI: ${VITE_API_BASE_URI:-}
@@ -31,12 +13,30 @@ services:
         VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
         VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
         VITE_FIREBASE_MEASUREMENT_ID: ${VITE_FIREBASE_MEASUREMENT_ID:-}
-    container_name: dpr_frontend
+    container_name: dpr-app
     restart: unless-stopped
+    # Shares the host's network namespace, so the app is reachable directly
+    # on localhost:${PORT} and can reach a host-level MongoDB at 127.0.0.1:27017.
+    network_mode: host
     environment:
-      PORT: 3000
-      BASE_PATH: ${BASE_PATH_NAME:-listing-ccd}
-    ports:
-      - "${FRONTEND_PORT:-6026}:3000"
-    depends_on:
-      - backend
+      NODE_ENV: production
+      PORT: ${PORT:-6026}
+      BASE_PATH: /${BASE_PATH_NAME:-listing-ccd}
+      FRONTEND_BASE_PATH: /${BASE_PATH_NAME:-listing-ccd}
+    env_file:
+      # MONGODB_URI, Azure app creds, session/admin secrets, etc.
+      - ./backend/.env
+
+  # Optional containerised Mongo, only needed if you don't already run
+  # mongod on the host. Start with: docker compose --profile with-mongo up -d
+  mongo:
+    image: mongo:7
+    container_name: dpr-mongo
+    profiles: ["with-mongo"]
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:

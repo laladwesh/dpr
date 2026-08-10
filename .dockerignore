@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/.env
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+readme.md
+backend/Dockerfile
+backend/docker-compose.yml
+backend/.dockerignore
+backend/.adminjs

@@ -1,4 +1,7 @@
-const DEFAULT_API_BASE_URL = "http://localhost:8081";
+// In prod the backend serves the built frontend itself (same origin), so
+// requests should be relative. In dev the Vite server (5173) is separate
+// from the API server, so it needs an absolute URL.
+const DEFAULT_API_BASE_URL = import.meta.env.DEV ? "http://localhost:8081" : "";
 const API_BASE_PATH = `/${(import.meta.env.VITE_BASE_URL || "/dpr/").replace(/^\/+|\/+$/g, "")}`;
 
 export const getApiBaseUrl = () => {

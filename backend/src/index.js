@@ -30,6 +30,8 @@ const __dirname = path.dirname(__filename);
 const tempDir = path.join(__dirname, '../temp');
 const allowedFiles = [".csv", ".xlsx", ".xls"];
 const BASE_PATH = `/${(process.env.BASE_PATH || "/dpr").replace(/^\/+|\/+$/g, "")}`;
+const clientDistPath = path.join(__dirname, '../public');
+const hasClientBuild = fs.existsSync(path.join(clientDistPath, 'index.html'));
 
 const normalizeCompanyName = (name) =>
   String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
@@ -146,8 +148,10 @@ app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Basic route
-app.get(`${BASE_PATH}/`, (req, res) => res.send('API is running...'));
+// Basic route (only relevant when this process isn't also serving the built frontend)
+if (!hasClientBuild) {
+  app.get(`${BASE_PATH}/`, (req, res) => res.send('API is running...'));
+}
 
 const getFrontendUrl = () =>
   `${process.env.FRONTEND_URL || "http://localhost:5173"}${process.env.FRONTEND_BASE_PATH || BASE_PATH}`;
@@ -711,6 +715,18 @@ apiRouter.post('/api/update-poc-remarks', authGuard, async (req, res) => {
 });
 
 app.use(BASE_PATH, apiRouter);
+
+// Serve the built frontend (single-container deploy: copied into ./public at build time)
+if (hasClientBuild) {
+  app.get('/', (req, res) => res.redirect(`${BASE_PATH}/`));
+  app.use(BASE_PATH, express.static(clientDistPath));
+  app.get(`${BASE_PATH}/*splat`, (req, res) => {
+    if (req.path.startsWith(`${BASE_PATH}/api/`) || req.path.startsWith(`${BASE_PATH}/admin`)) {
+      return res.status(404).json({ success: false, message: 'Not found' });
+    }
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
+}
 
 const PORT = process.env.PORT || 8081;
 app.listen(PORT, '0.0.0.0', () => {

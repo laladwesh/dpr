@@ -1,11 +1,12 @@
-FROM node:20-alpine AS dependencies
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+# Single-container build: React (Vite) frontend + Express backend.
+# The backend serves the built frontend itself under BASE_PATH, so the
+# whole app is reachable on one port (see backend/src/index.js).
 
-FROM dependencies AS build
-WORKDIR /app
-COPY . .
+FROM node:20-alpine AS frontend-build
+WORKDIR /app/frontend
+COPY Frontend/package*.json ./
+RUN npm ci
+COPY Frontend/. .
 
 # Vite bakes these in at build time, so they must be supplied as build args.
 ARG VITE_BASE_URL=listing-ccd/
@@ -29,17 +30,21 @@ ENV VITE_BASE_URL=$VITE_BASE_URL \
 
 RUN npm run build
 
+FROM node:20-alpine AS backend-deps
+WORKDIR /app
+COPY backend/package*.json ./
+RUN npm ci
+
 FROM node:20-alpine AS production
 WORKDIR /app
 ENV NODE_ENV=production
-COPY package*.json ./
-RUN npm ci --omit=dev
-COPY server.js ./
-COPY --from=build /app/dist ./dist
+COPY --from=backend-deps /app/node_modules ./node_modules
+COPY backend/. .
+COPY --from=frontend-build /app/frontend/dist ./public
 
-# Path segment the app is served under, e.g. "listing-ccd" -> /listing-ccd
-ENV BASE_PATH=listing-ccd
-ENV PORT=3000
-EXPOSE 3000
+# Path segment the whole app is served under, and the port it listens on.
+ENV BASE_PATH=/listing-ccd
+ENV PORT=6026
+EXPOSE 6026
 
-CMD ["node", "server.js"]
+CMD ["npm", "start"]
