@@ -14,7 +14,7 @@ function HomePage() {
     if (loading) return;
 
     if (!isAuthenticated) {
-      navigate("/login");
+      navigate("/login", { replace: true });
     }
   }, [isAuthenticated, loading, navigate]);
 

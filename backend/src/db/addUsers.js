@@ -16,28 +16,24 @@ const dummyUsers = [
   {
     name: "Srayash Singh",
     email: "s.srayash@iitg.ac.in",
-    password: "iitg@123",
     role: "admin",
     companies: [],
   },
   {
     name: "Utkarsh Narayan Pandey",
     email: "u.pandey@iitg.ac.in",
-    password: "iitg@123",
     role: "admin",
     companies: [],
   },
   {
     name: "SC User One",
     email: "sc1@iitg.ac.in",
-    password: "iitg@123",
     role: "sc",
     companies: [],
   },
   {
     name: "DPR User One",
     email: "dpr1@iitg.ac.in",
-    password: "iitg@123",
     role: "dpr",
     companies: [],
   }

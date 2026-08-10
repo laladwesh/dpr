@@ -1,6 +1,9 @@
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import express from 'express';
 import cors from 'cors';
+import jwt from 'jsonwebtoken';
+import jwksRsa from 'jwks-rsa';
 import connectDB from './db/index.js';
 import { admin, adminRouter } from './adminjs/index.js';
 import { authGuard } from './middleware/auth.middleware.js';
@@ -12,6 +15,11 @@ import csv from 'csv-parser';
 import xlsx from 'xlsx';
 import fUpload from 'express-fileupload';
 import { fileURLToPath } from 'url';
+import {
+  clearSessionCookie,
+  createSessionToken,
+  setSessionCookie,
+} from './auth/session.js';
 
 // Load environment variables
 dotenv.config();
@@ -115,75 +123,151 @@ async function parseExcel(filePath) {
 }
 
 const app = express();
+const apiRouter = express.Router();
 
 // Connect to the database
 connectDB();
 
 // Middleware setup
-app.use(admin.options.rootPath, adminRouter);
+app.use('/dpr/admin', adminRouter);
 app.use(fUpload({ useTempFiles: true, tempFileDir: '/tmp/' }));
-app.use(cors({ origin: ["http://localhost:5173","https://ccd-industry.vercel.app"], credentials: true }));
+const allowedOrigins = [
+  process.env.FRONTEND_URL || "http://localhost:5173",
+  "https://ccd-industry.vercel.app",
+].filter(Boolean);
+
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Basic route
-app.get('/', (req, res) => res.send('API is running...'));
+app.get('/dpr/', (req, res) => res.send('API is running...'));
 
-const handleLogin = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+const getFrontendUrl = () =>
+  `${process.env.FRONTEND_URL || "http://localhost:5173"}${process.env.FRONTEND_BASE_PATH || "/dpr"}`;
+const getAzureRedirectUri = () =>
+  process.env.AZURE_REDIRECT_URI ||
+  `${process.env.API_PUBLIC_URL || `http://localhost:${process.env.PORT || 8081}`}/dpr/api/auth/azure/callback`;
 
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required' });
-    }
-
-    const normalizedEmail = String(email).toLowerCase();
-    const demoUsers = [
-      { name: 'Srayash Singh', email: 's.srayash@iitg.ac.in', password: 'iitg@123', role: 'admin' },
-      { name: 'Utkarsh Narayan Pandey', email: 'u.pandey@iitg.ac.in', password: 'iitg@123', role: 'admin' },
-      { name: 'SC User One', email: 'sc1@iitg.ac.in', password: 'iitg@123', role: 'sc' },
-      { name: 'DPR User One', email: 'dpr1@iitg.ac.in', password: 'iitg@123', role: 'dpr' },
-    ];
-
-    let user = await User.findOne({ email: normalizedEmail });
-    const demoUser = demoUsers.find((entry) => entry.email === normalizedEmail);
-
-    if (!user && demoUser) {
-      user = await User.create({ ...demoUser, companies: [] });
-    }
-
-    if (user && demoUser && user.role !== demoUser.role) {
-      user.role = demoUser.role;
-      user.name = demoUser.name;
-      user.password = demoUser.password;
-      await user.save();
-    }
-
-    if (!user || user.password !== password) {
-      return res.status(401).json({ success: false, message: 'Invalid email or password' });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Login successful',
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Internal server error' });
-  }
+const getCookie = (req, name) => {
+  const cookie = (req.headers.cookie || "")
+    .split(";")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(`${name}=`));
+  return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : null;
 };
 
-// Login with email and password
-app.post('/login', handleLogin);
-app.post('/api/login', handleLogin);
+const appendCookie = (res, value) => {
+  const existing = res.getHeader("Set-Cookie");
+  res.setHeader("Set-Cookie", existing ? [existing, value] : value);
+};
+
+const azureErrorRedirect = (res, error) =>
+  res.redirect(`${getFrontendUrl()}/login?error=${encodeURIComponent(error)}`);
+
+apiRouter.get('/api/auth/azure', (req, res) => {
+  const { AZURE_CLIENT_ID, AZURE_TENANT, AZURE_SECRET } = process.env;
+  if (!AZURE_CLIENT_ID || !AZURE_TENANT || !AZURE_SECRET) {
+    return azureErrorRedirect(res, 'azure_config');
+  }
+
+  const state = crypto.randomBytes(32).toString('hex');
+  appendCookie(
+    res,
+    `dpr_oauth_state=${state}; Path=/; HttpOnly; Max-Age=600; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
+  );
+
+  const params = new URLSearchParams({
+    client_id: AZURE_CLIENT_ID,
+    response_type: 'code',
+    redirect_uri: getAzureRedirectUri(),
+    response_mode: 'query',
+    scope: 'openid profile email',
+    state,
+  });
+
+  return res.redirect(`https://login.microsoftonline.com/${AZURE_TENANT}/oauth2/v2.0/authorize?${params}`);
+});
+
+apiRouter.get('/api/auth/azure/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error || !code || !state || state !== getCookie(req, 'dpr_oauth_state')) {
+    return azureErrorRedirect(res, error ? 'azure_auth' : 'azure_state');
+  }
+
+  try {
+    const { AZURE_CLIENT_ID, AZURE_TENANT, AZURE_SECRET } = process.env;
+    const tokenResponse = await fetch(
+      `https://login.microsoftonline.com/${AZURE_TENANT}/oauth2/v2.0/token`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: AZURE_CLIENT_ID,
+          client_secret: AZURE_SECRET,
+          code,
+          redirect_uri: getAzureRedirectUri(),
+          grant_type: 'authorization_code',
+          scope: 'openid profile email',
+        }),
+      }
+    );
+    const tokenData = await tokenResponse.json();
+    if (!tokenResponse.ok || !tokenData.id_token) {
+      return azureErrorRedirect(res, 'azure_token');
+    }
+
+    const keyClient = jwksRsa({
+      jwksUri: `https://login.microsoftonline.com/${AZURE_TENANT}/discovery/v2.0/keys`,
+    });
+    const getSigningKey = (header, callback) => {
+      keyClient.getSigningKey(header.kid)
+        .then((key) => callback(null, key.getPublicKey()))
+        .catch(callback);
+    };
+    const claims = await new Promise((resolve, reject) => {
+      jwt.verify(
+        tokenData.id_token,
+        getSigningKey,
+        {
+          algorithms: ['RS256'],
+          audience: AZURE_CLIENT_ID,
+          issuer: `https://login.microsoftonline.com/${AZURE_TENANT}/v2.0`,
+        },
+        (verifyError, decoded) => (verifyError ? reject(verifyError) : resolve(decoded))
+      );
+    });
+
+    const email = String(claims.preferred_username || claims.email || claims.upn || '').trim().toLowerCase();
+    const user = email ? await User.findOne({ email }) : null;
+    if (!user) {
+      return azureErrorRedirect(res, 'unauthorized');
+    }
+
+    setSessionCookie(res, createSessionToken(user));
+    appendCookie(
+      res,
+      `dpr_oauth_state=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
+    );
+    return res.redirect(`${getFrontendUrl()}/dashboard`);
+  } catch (callbackError) {
+    console.error('Azure authentication failed', callbackError);
+    return azureErrorRedirect(res, 'azure_auth');
+  }
+});
+
+apiRouter.get('/api/auth/session', authGuard, (req, res) => {
+  const { _id, name, email, role } = req.user;
+  res.json({ success: true, user: { id: _id, name, email, role } });
+});
+
+apiRouter.post('/api/auth/logout', (req, res) => {
+  clearSessionCookie(res);
+  res.json({ success: true });
+});
 
 // Get user role
-app.post('/api/get-user-role', authGuard, (req, res) => {
+apiRouter.post('/api/get-user-role', authGuard, (req, res) => {
   try {
     const user = req.user;
     res.status(200).json({
@@ -197,7 +281,7 @@ app.post('/api/get-user-role', authGuard, (req, res) => {
 });
 
 // Add companies from request body
-app.post('/api/add-companies', authGuard, async (req, res) => {
+apiRouter.post('/api/add-companies', authGuard, async (req, res) => {
   try {
     const { companies } = req.body;
     const user = req.user;
@@ -220,7 +304,7 @@ app.post('/api/add-companies', authGuard, async (req, res) => {
 });
 
 // Add companies with file
-app.post('/api/add-company-with-file', authGuard, async (req, res) => {
+apiRouter.post('/api/add-company-with-file', authGuard, async (req, res) => {
   try {
     const user = req.user;
     const dprEmail = user.email;
@@ -300,7 +384,7 @@ for (const company of companies) {
 });
 
 // Get SC users for admin assignment dropdown
-app.post('/api/get-sc-users', authGuard, async (req, res) => {
+apiRouter.post('/api/get-sc-users', authGuard, async (req, res) => {
   try {
     const user = req.user;
     if (user.role !== 'admin' && user.role !== 'sc') {
@@ -315,7 +399,7 @@ app.post('/api/get-sc-users', authGuard, async (req, res) => {
 });
 
 // Delete company
-app.delete('/api/delete-company', authGuard, async (req, res) => {
+apiRouter.delete('/api/delete-company', authGuard, async (req, res) => {
   try {
     const { companyId } = req.body;
     const user = req.user;
@@ -340,7 +424,7 @@ app.delete('/api/delete-company', authGuard, async (req, res) => {
 });
 
 // Get all companies
-app.post('/api/get-all-companies', authGuard, async (req, res) => {
+apiRouter.post('/api/get-all-companies', authGuard, async (req, res) => {
   try {
     const { filter = "all" } = req.body || {};
     const user = req.user;
@@ -403,7 +487,7 @@ app.post('/api/get-all-companies', authGuard, async (req, res) => {
 });
 
 // Assign SC to company
-app.post('/api/assign-sc', authGuard, async (req, res) => {
+apiRouter.post('/api/assign-sc', authGuard, async (req, res) => {
   try {
     const { companyId, scEmail } = req.body;
     const user = req.user;
@@ -441,7 +525,7 @@ app.post('/api/assign-sc', authGuard, async (req, res) => {
 });
 
 // Update company profiles
-app.post('/api/update-company-profiles', authGuard, async (req, res) => {
+apiRouter.post('/api/update-company-profiles', authGuard, async (req, res) => {
   try {
     const { companyId, profiles } = req.body;
     const user = req.user;
@@ -486,7 +570,7 @@ app.post('/api/update-company-profiles', authGuard, async (req, res) => {
 });
 
 // Update POC status
-app.post('/api/update-poc-status', authGuard, async (req, res) => {
+apiRouter.post('/api/update-poc-status', authGuard, async (req, res) => {
   try {
     const { companyId, pocId, status } = req.body;
     const user = req.user;
@@ -516,7 +600,7 @@ app.post('/api/update-poc-status', authGuard, async (req, res) => {
 });
 
 // Update POC remarks
-app.post('/api/update-poc-remarks', authGuard, async (req, res) => {
+apiRouter.post('/api/update-poc-remarks', authGuard, async (req, res) => {
   try {
     const { companyId, pocId, remarks } = req.body;
     const user = req.user;
@@ -544,6 +628,8 @@ app.post('/api/update-poc-remarks', authGuard, async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+
+app.use('/dpr', apiRouter);
 
 const PORT = process.env.PORT || 8081;
 app.listen(PORT, '0.0.0.0', () => {

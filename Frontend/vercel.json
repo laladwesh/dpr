@@ -1,3 +1,10 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/" }]
+  "redirects": [
+    { "source": "/", "destination": "/dpr/login", "permanent": false }
+  ],
+  "rewrites": [
+    { "source": "/dpr/assets/(.*)", "destination": "/assets/$1" },
+    { "source": "/dpr/images/(.*)", "destination": "/images/$1" },
+    { "source": "/dpr/(.*)", "destination": "/index.html" }
+  ]
 }

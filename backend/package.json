@@ -14,6 +14,7 @@
   "dependencies": {
     "@adminjs/express": "^6.1.1",
     "@adminjs/mongoose": "^4.1.0",
+    "@azure/msal-browser": "^5.18.0",
     "adminjs": "^7.8.15",
     "cors": "^2.8.5",
     "csv-parser": "^3.2.0",
@@ -23,6 +24,8 @@
     "express-formidable": "^1.2.0",
     "express-session": "^1.18.1",
     "fs": "^0.0.1-security",
+    "jsonwebtoken": "^9.0.3",
+    "jwks-rsa": "^4.1.0",
     "mongoose": "^8.13.2",
     "path": "^0.12.7",
     "xlsx": "^0.18.5"

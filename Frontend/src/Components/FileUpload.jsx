@@ -1,10 +1,8 @@
 import React, { useState } from "react";
 import axios from "axios";
-import { useAuth } from "../context/AuthProvider";
 import { buildApiUrl } from "../api";
 
 const FileUpload = () => {
-  const { user } = useAuth();
   const [file, setFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null);
@@ -28,7 +26,6 @@ const FileUpload = () => {
 
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("email", user?.email || "developer@local");
 
     setIsUploading(true);
     setError(null);

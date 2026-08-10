@@ -12,7 +12,7 @@ const App = () => {
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
-      navigate("/login");
+      navigate("/login", { replace: true });
     }
   }, [isAuthenticated, loading, navigate]);
 
@@ -22,8 +22,8 @@ const App = () => {
       <div className="max-w-6xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 sm:px-0">
             <div className="mb-8 text-center">
-              <h1 className="text-3xl font-extrabold text-gray-800">DPR Portal</h1>
-              <p className="mt-2 text-sm text-gray-600">Manage your company and HR data</p>
+              <h1 className="text-3xl font-extrabold text-gray-800">Company Listing Portal</h1>
+              <p className="mt-2 text-sm text-gray-600">Add your company and HR data</p>
             </div>
 
             <div className="flex justify-center">
@@ -32,7 +32,7 @@ const App = () => {
                   onClick={() => setMode("file")}
                   className={`w-auto px-4 py-3 text-gray-600 text-sm rounded-lg font-medium text-center ${
                     mode === "file"
-                      ? "bg-blue-600 text-white"
+                      ? "bg-[#192aac] text-white"
                       : "hover:text-blue-400"
                   } transition-colors`}
                 >
@@ -42,7 +42,7 @@ const App = () => {
                   onClick={() => setMode("manual")}
                   className={`w-auto px-4 py-3 text-sm text-gray-600 rounded-lg font-medium text-center ${
                     mode === "manual"
-                      ? "bg-blue-600 text-white"
+                      ? "bg-[#192aac] text-white"
                       : "hover:text-blue-400"
                   } transition-colors`}
                 >

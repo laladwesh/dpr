@@ -5,9 +5,13 @@ import tailwindcss from "@tailwindcss/vite";
 // https://vite.dev/config/
 export default ({ mode }) => {
   process.env = { ...process.env, ...loadEnv(mode, process.cwd()) };
+  const configuredBase = process.env.VITE_BASE_URL?.trim();
+  const basePath = configuredBase
+    ? `/${configuredBase.replace(/^\/+|\/+$/g, "")}/`
+    : "/dpr/";
 
   return defineConfig({
-    base: process.env.VITE_BASE_URL || "/",
+    base: basePath,
     plugins: [react(), tailwindcss()],
     host: true,
   });

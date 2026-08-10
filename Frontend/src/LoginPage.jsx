@@ -1,29 +1,28 @@
-import React, { useState } from "react";
+import React, { useEffect } from "react";
 import { useAuth } from "./context/AuthProvider";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
+import { Mail } from "lucide-react";
 
 function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
 
-  const handleLogin = async (e) => {
+  useEffect(() => {
+    const error = new URLSearchParams(location.search).get("error");
+    if (error === "unauthorized") {
+      toast.error("User not Authorized, please contact team CCD");
+      navigate(location.pathname, { replace: true });
+    } else if (error) {
+      toast.error("Azure authentication failed. Please try again.");
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location, navigate]);
+
+  const handleLogin = (e) => {
     e.preventDefault();
-
-    if (!email || !password) {
-      toast.error("Please enter both email and password.");
-      return;
-    }
-
-    const res = await login(email, password);
-
-    if (res.success) {
-      navigate("/dashboard");
-    } else {
-      toast.error(res.message || "Invalid credentials");
-    }
+    login();
   };
 
   return (
@@ -43,33 +42,12 @@ function LoginPage() {
         </h2>
 
         <form onSubmit={handleLogin} className="space-y-4 text-left">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700"
-              placeholder="Enter your email"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700"
-              placeholder="Enter password"
-            />
-          </div>
-
           <button
             type="submit"
-            className="w-full py-3 text-base font-semibold text-white bg-[#003366] hover:bg-[#002244] rounded-md transition cursor-pointer"
+            className="w-full py-3 text-base font-semibold text-white bg-[#003366] hover:bg-[#002244] rounded-md transition cursor-pointer inline-flex items-center justify-center gap-2"
           >
-            Login
+            <Mail size={18} aria-hidden="true" />
+            Login with Outlook
           </button>
         </form>
       </div>

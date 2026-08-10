@@ -9,10 +9,12 @@ import Homepage from "./Homepage.jsx";
 import Navbar from "./Components/Navbar.jsx";
 import { ToastContainer, Bounce } from "react-toastify";
 
+const appBasePath = `/${(import.meta.env.VITE_BASE_URL || "/dpr/").replace(/^\/+|\/+$/g, "")}`;
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <AuthProvider>
-      <BrowserRouter basename={import.meta.env.VITE_BASE_URL}>
+    <BrowserRouter basename={appBasePath}>
+      <AuthProvider>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Homepage />} />
@@ -20,21 +22,21 @@ createRoot(document.getElementById("root")).render(
           <Route path="/create" element={<App />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
-      </BrowserRouter>
+      </AuthProvider>
+    </BrowserRouter>
 
-      <ToastContainer
-        position="bottom-right"
-        autoClose={5000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick={false}
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="light"
-        transition={Bounce}
-      />
-    </AuthProvider>
+    <ToastContainer
+      position="bottom-right"
+      autoClose={5000}
+      hideProgressBar={false}
+      newestOnTop={false}
+      closeOnClick={false}
+      rtl={false}
+      pauseOnFocusLoss
+      draggable
+      pauseOnHover
+      theme="light"
+      transition={Bounce}
+    />
   </StrictMode>
 );

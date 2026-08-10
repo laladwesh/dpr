@@ -1,30 +1,37 @@
 import User from "../models/user.model.js";
+import { getSessionToken, verifySessionToken } from "../auth/session.js";
 
 export const authGuard = async (req, res, next) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is required",
-      });
+    const token = getSessionToken(req);
+    if (!token) {
+      return res.status(401).json({ success: false, message: "Authentication required" });
     }
 
-    const user = await User.findOne({ email });
+    const claims = verifySessionToken(token);
+    const user = await User.findOne({
+      $or: [{ _id: claims.sub }, { email: String(claims.email || "").toLowerCase() }],
+    });
 
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: "Unauthorized",
+        message: "User not Authorized, please contact team CCD",
       });
     }
 
     req.user = user;
     next();
   } catch (error) {
+    if (error.name === "JsonWebTokenError" || error.name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
     console.error("Error in auth middleware", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Internal server error",
     });

@@ -1,112 +1,66 @@
 import React, { createContext, useState, useContext, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { buildApiUrl, parseJsonResponse } from "../api";
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
+  const navigate = useNavigate();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const login = async (email, password) => {
-    const fallbackDemoLogin = (inputEmail, inputPassword) => {
-      const normalizedEmail = String(inputEmail || "").toLowerCase();
-      const isDemoUser =
-        normalizedEmail === "s.srayash@iitg.ac.in" ||
-        normalizedEmail === "u.pandey@iitg.ac.in" ||
-        normalizedEmail === "sc1@iitg.ac.in" ||
-        normalizedEmail === "dpr1@iitg.ac.in";
-
-      if (isDemoUser && inputPassword === "iitg@123") {
-        const demoUser = {
-          id: "local-demo-user",
-          name:
-            normalizedEmail === "sc1@iitg.ac.in"
-              ? "SC User One"
-              : normalizedEmail === "dpr1@iitg.ac.in"
-              ? "DPR User One"
-              : normalizedEmail.includes("srayash")
-              ? "Srayash Singh"
-              : "Utkarsh Narayan Pandey",
-          email: normalizedEmail,
-          role: normalizedEmail === "sc1@iitg.ac.in" ? "sc" : normalizedEmail === "dpr1@iitg.ac.in" ? "dpr" : "admin",
-        };
-
-        setIsAuthenticated(true);
-        setUser(demoUser);
-        setUserRole(demoUser.role);
-        setLoading(false);
-
-        return {
-          success: true,
-          message: "Login successful",
-        };
-      }
-
-      return {
-        success: false,
-        message: "Invalid email or password",
-      };
-    };
-
-    try {
-      const response = await fetch(buildApiUrl("/api/login"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await parseJsonResponse(response);
-
-      if (response.ok && data?.success) {
-        setIsAuthenticated(true);
-        setUser(data.user);
-        setUserRole(data.user.role);
-        setLoading(false);
-
-        return {
-          success: true,
-          message: data.message || "Login successful",
-        };
-      }
-
-      if (response.status === 404) {
-        return fallbackDemoLogin(email, password);
-      }
-
-      setIsAuthenticated(false);
-      setUser(null);
-      setUserRole(null);
-      setLoading(false);
-
-      return {
-        success: false,
-        message: data?.message || "Login failed",
-      };
-    } catch (error) {
-      console.error("Error during login:", error);
-      return fallbackDemoLogin(email, password);
-    }
+  const login = () => {
+    window.location.assign(buildApiUrl("/api/auth/azure"));
   };
 
   const logout = async () => {
     try {
+      const response = await fetch(buildApiUrl("/api/auth/logout"), {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        console.warn(`Logout request returned ${response.status}`);
+      }
+    } catch (error) {
+      console.error("Error signing out:", error);
+      toast.error("Could not contact the server. You have been signed out locally.");
+    } finally {
       setIsAuthenticated(false);
       setUser(null);
       setUserRole(null);
-      setLoading(false);
-    } catch (error) {
-      console.error("Error signing out:", error);
-      toast.error("Error signing out. Please try again.");
+      navigate("/login", { replace: true });
     }
   };
 
   useEffect(() => {
-    setLoading(false);
+    const loadSession = async () => {
+      try {
+        const response = await fetch(buildApiUrl("/api/auth/session"), {
+          credentials: "include",
+        });
+        const data = await parseJsonResponse(response);
+
+        if (response.ok && data?.success && data.user) {
+          setIsAuthenticated(true);
+          setUser(data.user);
+          setUserRole(data.user.role);
+        } else {
+          setIsAuthenticated(false);
+          setUser(null);
+          setUserRole(null);
+        }
+      } catch (error) {
+        console.error("Error loading authentication session:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadSession();
   }, []);
 
   return (

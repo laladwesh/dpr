@@ -1,4 +1,19 @@
 [[redirects]]
-  from = "/*"
+  from = "/"
+  to   = "/dpr/login"
+  status = 302
+
+[[redirects]]
+  from = "/dpr/assets/*"
+  to   = "/assets/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/dpr/images/*"
+  to   = "/images/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/dpr/*"
   to   = "/index.html"
   status = 200

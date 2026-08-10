@@ -18,9 +18,9 @@ AdminJS.registerAdapter({
 });
 
 export const admin = new AdminJS({
-  rootPath: "/admin",
-  loginPath: "/admin/login",
-  logoutPath: "/admin/logout",
+  rootPath: "/dpr/admin",
+  loginPath: "/dpr/admin/login",
+  logoutPath: "/dpr/admin/logout",
   resources: [Company, User],
 });
 
