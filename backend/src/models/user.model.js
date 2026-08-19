@@ -13,17 +13,20 @@ const userSchema = new mongoose.Schema(
       unique: true,
       trim: true,
       lowercase: true,
+      index: true,
     },
     role: {
       type: String,
       enum: ["admin", "dpr", "sc"],
       default: "dpr",
       required: true,
+      index: true,
     },
     companies: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Company",
+        index: true,
       },
     ],
   },

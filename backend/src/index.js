@@ -528,9 +528,15 @@ apiRouter.post('/api/get-all-companies', authGuard, async (req, res) => {
       }
     } else if (user.role === "admin") {
       if (filter === "unassigned") {
-        query = query.where({ scEmail: { $exists: false } }).or([{ scEmail: null }, { scEmail: "" }]);
+        query = query.where({
+          $or: [
+            { scEmail: { $exists: false } },
+            { scEmail: null },
+            { scEmail: "" },
+          ],
+        });
       } else if (filter === "assigned") {
-        query = query.where({ scEmail: { $ne: "" } }).ne(null);
+        query = query.where({ scEmail: { $ne: null, $ne: "" } });
       }
     }
 
@@ -690,27 +696,55 @@ apiRouter.post('/api/update-poc-remarks', authGuard, async (req, res) => {
   try {
     const { companyId, pocId, remarks } = req.body;
     const user = req.user;
+    const normalizedRole = user.role === 'admin' ? 'admin' : user.role;
 
-    if (user.role !== 'admin' && user.role !== 'sc') {
-      return res.status(403).json({ success: false, message: 'Only admins and SCs can update remarks' });
+    if (!['admin', 'sc', 'dpr'].includes(user.role)) {
+      return res.status(403).json({ success: false, message: 'Only admins, SCs, and DPR users can update remarks' });
     }
 
-    if (!companyId || !pocId || !remarks) {
+    const trimmedRemark = String(remarks || '').trim();
+    if (!companyId || !pocId || !trimmedRemark) {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
-    const company = await Company.findOneAndUpdate(
-      { _id: companyId, 'pocs._id': pocId },
-      { $set: { 'pocs.$.remarks': remarks } },
-      { new: true }
-    );
-
+    const company = await Company.findOne({ _id: companyId, 'pocs._id': pocId });
     if (!company) {
       return res.status(404).json({ message: 'Company or POC not found' });
     }
 
+    const poc = company.pocs.id(pocId);
+    if (!poc) {
+      return res.status(404).json({ message: 'POC not found' });
+    }
+
+    const existingRemarks = Array.isArray(poc.remarks)
+      ? poc.remarks
+      : typeof poc.remarks === 'string' && poc.remarks.trim()
+        ? [{
+            role: 'dpr',
+            author: 'Previous note',
+            authorEmail: '',
+            text: poc.remarks.trim(),
+            createdAt: new Date().toISOString(),
+          }]
+        : [];
+
+    poc.remarks = [
+      ...existingRemarks,
+      {
+        role: normalizedRole,
+        author: user.name || user.email || 'Unknown user',
+        authorEmail: user.email || '',
+        text: trimmedRemark,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+
+    await company.save();
+
     res.status(200).json({ success: true, message: 'POC remarks updated', company });
   } catch (error) {
+    console.error('Error updating POC remarks', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });

@@ -93,9 +93,8 @@ export default function CompanyPortal() {
         toast.error("Error fetching companies. Please try again later.");
         return;
       }
-      if (companies.length > 0) {
-        setCompanies(companies);
-      }
+
+      setCompanies(Array.isArray(companies) ? companies : []);
     } catch (error) {
       console.error("Error fetching companies:", error);
       toast.error("Network request failed. Please try again later.");
@@ -388,7 +387,7 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
   };
 
   const updatePOCRemark = async (pocId, remarks) => {
-    if (userRole !== "admin" && userRole !== "sc") return;
+    if (!['admin', 'sc', 'dpr'].includes(userRole)) return;
     try {
       const response = await fetch(buildApiUrl("/api/update-poc-remarks"), {
         method: "POST",
@@ -403,21 +402,23 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
       const data = await parseJsonResponse(response);
 
       if (data.success) {
-        toast.success("Remarks updated");
+        const updatedCompany = data.company;
+        const updatedPOC = updatedCompany?.pocs?.find((poc) => poc._id === pocId);
+
+        toast.success("Remark added");
         setCompanies((prev) =>
           prev.map((prevCompany) =>
             prevCompany._id === id
-              ? {
-                  ...prevCompany,
-                  pocs: prevCompany.pocs.map((prevPOC) =>
-                    prevPOC._id === pocId ? { ...prevPOC, remarks: remarks } : prevPOC
-                  ),
-                }
+              ? { ...prevCompany, pocs: updatedCompany?.pocs || prevCompany.pocs }
               : prevCompany
           )
         );
+
+        if (!updatedPOC) {
+          return;
+        }
       } else {
-        toast.error("Something went wrong");
+        toast.error(data?.message || "Something went wrong");
       }
     } catch {
       toast.error("Network request failed");
@@ -712,6 +713,8 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
                       updateRemarks={updatePOCRemark}
                       id={poc._id}
                       userRole={userRole}
+                      currentUserName={user?.name}
+                      currentUserEmail={user?.email}
                     />
                   );
                 })}
@@ -724,17 +727,40 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
   );
 }
 
-function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus, id, userRole }) {
+function normalizeRemarks(remarksValue) {
+  if (Array.isArray(remarksValue)) {
+    return remarksValue.filter((remark) => remark && (remark.text || remark.message || remark.remarks));
+  }
+
+  if (typeof remarksValue === "string" && remarksValue.trim()) {
+    return [{
+      role: "dpr",
+      author: "Previous note",
+      authorEmail: "",
+      text: remarksValue.trim(),
+      createdAt: new Date().toISOString(),
+    }];
+  }
+
+  return [];
+}
+
+function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus, id, userRole, currentUserName, currentUserEmail }) {
   const [isEditing, setIsEditing] = useState(false);
-  const [editedRemark, setEditedRemark] = useState(remarks);
+  const [editedRemark, setEditedRemark] = useState("");
+  const normalizedRemarks = useMemo(() => normalizeRemarks(remarks), [remarks]);
 
   const handleSave = () => {
-    updateRemarks(id, editedRemark);
+    const trimmed = editedRemark.trim();
+    if (!trimmed) return;
+
+    updateRemarks(id, trimmed);
+    setEditedRemark("");
     setIsEditing(false);
   };
 
   const handleCancel = () => {
-    setEditedRemark(remarks);
+    setEditedRemark("");
     setIsEditing(false);
   };
 
@@ -780,37 +806,56 @@ function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus,
       </div>
 
       <div className="mt-5 pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Remarks</span>
+          {['admin', 'sc', 'dpr'].includes(userRole) && (
+            <button
+              onClick={() => setIsEditing(true)}
+              className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 transition-all hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50"
+            >
+              <Edit2 size={12} /> Add remark
+            </button>
+          )}
+        </div>
+
         {isEditing ? (
           <div className="space-y-3">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Edit Remarks</label>
             <textarea
               value={editedRemark}
               onChange={(e) => setEditedRemark(e.target.value)}
               className="w-full rounded-lg border border-slate-300 bg-white p-3 text-sm font-medium text-slate-800 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 min-h-[80px]"
+              placeholder={`Add a ${userRole === 'sc' ? 'SC' : userRole === 'dpr' ? 'DPR' : 'admin'} remark...`}
             />
             <div className="flex gap-3">
-              <button onClick={handleSave} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors">Save Remarks</button>
+              <button onClick={handleSave} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors">Save remark</button>
               <button onClick={handleCancel} className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
             </div>
           </div>
-        ) : (
-          <div className="group/remarks relative">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Remarks</span>
-              {(userRole === "admin" || userRole === "sc") && (
-                <button 
-                  onClick={() => setIsEditing(true)} 
-                  className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 transition-all hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50"
-                >
-                  <Edit2 size={12} /> Edit
-                </button>
-              )}
-            </div>
-            <p className="text-sm font-medium text-slate-600 whitespace-pre-wrap leading-relaxed">
-              {remarks || <span className="text-slate-400 italic font-normal">No remarks added yet.</span>}
-            </p>
-          </div>
-        )}
+        ) : null}
+
+        <div className="space-y-3">
+          {normalizedRemarks.length > 0 ? (
+            normalizedRemarks.map((remark, index) => {
+              const remarkText = remark.text || remark.message || remark.remarks || "";
+              const roleLabel = remark.role === "sc" ? "SC" : remark.role === "dpr" ? "DPR" : remark.role === "admin" ? "Admin" : "Note";
+              const author = remark.author || remark.authorEmail || currentUserName || currentUserEmail || "Unknown user";
+
+              return (
+                <div key={`${remarkText}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{roleLabel}</span>
+                    <span className="text-[11px] text-slate-400">{author}</span>
+                  </div>
+                  <p className="text-sm font-medium text-slate-700 whitespace-pre-wrap leading-relaxed">
+                    {remarkText || <span className="text-slate-400 italic">No remarks added yet.</span>}
+                  </p>
+                </div>
+              );
+            })
+          ) : (
+            <p className="text-sm font-medium text-slate-500">No remarks added yet.</p>
+          )}
+        </div>
       </div>
     </div>
   );
