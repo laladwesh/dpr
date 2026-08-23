@@ -359,6 +359,15 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Mirrors the backend's actual rule (backend/src/index.js update-company-profiles):
+  // SC can edit if the company is unassigned, or assigned to them - never a
+  // company assigned to a different coordinator. Admins can edit any company.
+  const canEditProfiles =
+    userRole === "admin" ||
+    (userRole === "sc" &&
+      (!currentScEmail ||
+        currentScEmail.toLowerCase() === (currentUser?.email || "").toLowerCase()));
+
   const updatePOCStatus = async (pocId, status) => {
     if (userRole !== "admin" && userRole !== "sc") return;
     try {
@@ -659,7 +668,7 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
                 ))}
               </div>
 
-              {(userRole === "admin" || userRole === "sc") && (
+              {canEditProfiles && (
                 <div className="mt-5 pt-5 border-t border-slate-100">
                   {isEditingProfiles ? (
                     <div className="space-y-4">
