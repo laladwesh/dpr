@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, Edit2, Mail, Search, Phone, Building } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
-import { toast } from "react-toastify";
+import toast from "react-hot-toast";
 import Loader from "./Loader";
+import ConfirmDialog from "./ConfirmDialog";
 import { buildApiUrl, parseJsonResponse } from "../api";
 
 export default function CompanyPortal() {
   const { user, userRole, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
   const [companies, setCompanies] = useState([]);
   const [filteredCompanies, setFilteredCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -85,6 +88,8 @@ export default function CompanyPortal() {
 
       if (response.status === 401) {
         setCompanies([]);
+        toast.error("Your session has expired. Please log in again.");
+        navigate("/login", { replace: true });
         return;
       }
 
@@ -101,7 +106,7 @@ export default function CompanyPortal() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, navigate]);
 
   useEffect(() => {
     const filtered = companies.filter((company) => {
@@ -325,6 +330,7 @@ export default function CompanyPortal() {
                   setCompanies={setCompanies}
                   userRole={userRole}
                   scUsers={scUsers}
+                  currentUser={user}
                 />
               ))}
             </div>
@@ -341,13 +347,17 @@ export default function CompanyPortal() {
   );
 }
 
-function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setCompanies, userRole, scUsers }) {
+function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setCompanies, userRole, scUsers, currentUser }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isEditingProfiles, setIsEditingProfiles] = useState(false);
   const [editableProfiles, setEditableProfiles] = useState(profiles || []);
   const [profileDraft, setProfileDraft] = useState("");
   const [profileEditIndex, setProfileEditIndex] = useState(-1);
   const [profileEditText, setProfileEditText] = useState("");
+  const [isAssigningSc, setIsAssigningSc] = useState(false);
+  const [isSavingProfiles, setIsSavingProfiles] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const updatePOCStatus = async (pocId, status) => {
     if (userRole !== "admin" && userRole !== "sc") return;
@@ -429,6 +439,7 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
     const selectedScEmail = event.target.value;
     const normalizedScEmail = selectedScEmail ? selectedScEmail.toLowerCase() : "";
 
+    setIsAssigningSc(true);
     try {
       const response = await fetch(buildApiUrl("/api/assign-sc"), {
         method: "POST",
@@ -453,12 +464,13 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
       }
     } catch {
       toast.error("Failed to assign coordinator");
+    } finally {
+      setIsAssigningSc(false);
     }
   };
 
   const handleDeleteCompany = async () => {
-    if (!confirm(`Are you sure you want to delete ${name}?`)) return;
-
+    setIsDeleting(true);
     try {
       const response = await fetch(buildApiUrl("/api/delete-company"), {
         method: "DELETE",
@@ -471,13 +483,16 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
       const data = await parseJsonResponse(response);
 
       if (data.success) {
-        toast.success("Company deleted");
+        toast.success(`${name} deleted`);
         setCompanies((prev) => prev.filter((c) => c._id !== id));
       } else {
         toast.error(data.message || "Failed to delete company");
       }
     } catch {
       toast.error("Network request failed");
+    } finally {
+      setIsDeleting(false);
+      setIsDeleteDialogOpen(false);
     }
   };
 
@@ -537,6 +552,7 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
     if (editableProfiles.length === 0) {
       toast.error("At least one profile required"); return;
     }
+    setIsSavingProfiles(true);
     try {
       const response = await fetch(buildApiUrl("/api/update-company-profiles"), {
         method: "POST",
@@ -562,6 +578,8 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
       }
     } catch {
       toast.error("Network request failed");
+    } finally {
+      setIsSavingProfiles(false);
     }
   };
 
@@ -608,7 +626,8 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
                 <select
                   value={currentScEmail || ""}
                   onChange={handleAssignSc}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 font-medium focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                  disabled={isAssigningSc}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 font-medium focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option value="">Unassigned</option>
                   {scUsers.map((scUser) => (
@@ -618,7 +637,10 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
                   ))}
                 </select>
                 {userRole === "admin" && (
-                  <button onClick={handleDeleteCompany} className="rounded-md bg-white border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 hover:border-red-300 transition-colors">
+                  <button
+                    onClick={() => setIsDeleteDialogOpen(true)}
+                    className="rounded-md bg-white border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 hover:border-red-300 transition-colors"
+                  >
                     Delete
                   </button>
                 )}
@@ -680,8 +702,23 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
                       </div>
 
                       <div className="flex gap-3 pt-2">
-                        <button onClick={saveProfileChanges} className="flex-1 rounded-md bg-blue-600 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors">Save All</button>
-                        <button onClick={() => setIsEditingProfiles(false)} className="flex-1 rounded-md border border-slate-300 bg-white py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
+                        <button
+                          onClick={saveProfileChanges}
+                          disabled={isSavingProfiles}
+                          className="flex flex-1 items-center justify-center gap-2 rounded-md bg-blue-600 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {isSavingProfiles && (
+                            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                          )}
+                          {isSavingProfiles ? "Saving..." : "Save All"}
+                        </button>
+                        <button
+                          onClick={() => setIsEditingProfiles(false)}
+                          disabled={isSavingProfiles}
+                          className="flex-1 rounded-md border border-slate-300 bg-white py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
                       </div>
                     </div>
                   ) : (
@@ -713,8 +750,8 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
                       updateRemarks={updatePOCRemark}
                       id={poc._id}
                       userRole={userRole}
-                      currentUserName={user?.name}
-                      currentUserEmail={user?.email}
+                      currentUserName={currentUser?.name}
+                      currentUserEmail={currentUser?.email}
                     />
                   );
                 })}
@@ -723,6 +760,17 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={isDeleteDialogOpen}
+        title="Delete this company?"
+        description={`This will permanently remove "${name}" and all of its points of contact. This cannot be undone.`}
+        confirmLabel="Delete company"
+        tone="danger"
+        busy={isDeleting}
+        onConfirm={handleDeleteCompany}
+        onCancel={() => setIsDeleteDialogOpen(false)}
+      />
     </div>
   );
 }
@@ -748,15 +796,31 @@ function normalizeRemarks(remarksValue) {
 function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus, id, userRole, currentUserName, currentUserEmail }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedRemark, setEditedRemark] = useState("");
+  const [isSavingStatus, setIsSavingStatus] = useState(false);
+  const [isSavingRemark, setIsSavingRemark] = useState(false);
   const normalizedRemarks = useMemo(() => normalizeRemarks(remarks), [remarks]);
 
-  const handleSave = () => {
+  const handleStatusChange = async (event) => {
+    setIsSavingStatus(true);
+    try {
+      await updateStatus(id, event.target.value);
+    } finally {
+      setIsSavingStatus(false);
+    }
+  };
+
+  const handleSave = async () => {
     const trimmed = editedRemark.trim();
     if (!trimmed) return;
 
-    updateRemarks(id, trimmed);
-    setEditedRemark("");
-    setIsEditing(false);
+    setIsSavingRemark(true);
+    try {
+      await updateRemarks(id, trimmed);
+      setEditedRemark("");
+      setIsEditing(false);
+    } finally {
+      setIsSavingRemark(false);
+    }
   };
 
   const handleCancel = () => {
@@ -793,9 +857,9 @@ function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus,
         <div className="w-full sm:w-48 shrink-0">
           <select
             value={status}
-            className={`w-full rounded-md border px-3 py-2 text-sm font-bold focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 transition-colors ${statusColors[status] || statusColors["yet to contact"]}`}
-            onChange={(e) => updateStatus(id, e.target.value)}
-            disabled={userRole !== "admin" && userRole !== "sc"}
+            className={`w-full rounded-md border px-3 py-2 text-sm font-bold focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${statusColors[status] || statusColors["yet to contact"]}`}
+            onChange={handleStatusChange}
+            disabled={(userRole !== "admin" && userRole !== "sc") || isSavingStatus}
           >
             <option value="yet to contact">Yet to contact</option>
             <option value="ongoing">Ongoing</option>
@@ -827,8 +891,23 @@ function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus,
               placeholder={`Add a ${userRole === 'sc' ? 'SC' : userRole === 'dpr' ? 'DPR' : 'admin'} remark...`}
             />
             <div className="flex gap-3">
-              <button onClick={handleSave} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors">Save remark</button>
-              <button onClick={handleCancel} className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
+              <button
+                onClick={handleSave}
+                disabled={isSavingRemark || !editedRemark.trim()}
+                className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isSavingRemark && (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                )}
+                {isSavingRemark ? "Saving..." : "Save remark"}
+              </button>
+              <button
+                onClick={handleCancel}
+                disabled={isSavingRemark}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         ) : null}

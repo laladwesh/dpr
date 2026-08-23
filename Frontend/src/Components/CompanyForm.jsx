@@ -1,20 +1,23 @@
 import React, { useEffect, useState } from "react";
-import { toast } from "react-toastify";
+import toast from "react-hot-toast";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
 import { buildApiUrl, parseJsonResponse } from "../api";
 import { Plus, Trash2, X, Building, ChevronDown, ChevronUp, Search } from "lucide-react";
 
+const emptyCompany = () => ({
+  name: "",
+  profiles: [""],
+  pocs: [{ name: "", email: "", phone: "", remarks: "" }],
+});
+
 const CompanyForm = () => {
   const { userRole } = useAuth();
-  const [companies, setCompanies] = useState([
-    {
-      name: "",
-      profiles: [""],
-      pocs: [{ name: "", email: "", phone: "", remarks: "" }],
-    },
-  ]);
+  const navigate = useNavigate();
+  const [companies, setCompanies] = useState([emptyCompany()]);
   const [suggestions, setSuggestions] = useState({});
   const [expandedSuggestion, setExpandedSuggestion] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     const timers = companies.map((company, index) => {
@@ -90,10 +93,7 @@ const CompanyForm = () => {
   };
 
   const addCompany = () => {
-    setCompanies([
-      ...companies,
-      { name: "", profiles: [""], pocs: [{ name: "", email: "", phone: "", remarks: "" }] },
-    ]);
+    setCompanies([...companies, emptyCompany()]);
   };
 
   const removeCompany = (index) => {
@@ -107,11 +107,24 @@ const CompanyForm = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    if (isSubmitting) return;
+
     if (userRole === "sc") {
       toast.error("Coordinators cannot add companies.");
       return;
     }
 
+    const trimmedNames = companies.map((company) => company.name.trim());
+    const duplicateName = trimmedNames.find(
+      (name, index) =>
+        name && trimmedNames.findIndex((other) => other.toLowerCase() === name.toLowerCase()) !== index
+    );
+    if (duplicateName) {
+      toast.error(`"${duplicateName}" is listed more than once in this form.`);
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
       const response = await fetch(buildApiUrl("/api/add-companies"), {
         method: "POST",
@@ -124,22 +137,25 @@ const CompanyForm = () => {
         }),
       });
 
+      if (response.status === 401) {
+        toast.error("Your session has expired. Please log in again.");
+        navigate("/login", { replace: true });
+        return;
+      }
+
       const data = await parseJsonResponse(response);
       if (response.ok) {
-        toast.success("Form submitted successfully!");
-        setCompanies([
-          {
-            name: "",
-            profiles: [""],
-            pocs: [{ name: "", email: "", phone: "", remarks: "" }],
-          },
-        ]);
+        const count = companies.length;
+        toast.success(`${count} compan${count === 1 ? "y" : "ies"} added successfully!`);
+        setCompanies([emptyCompany()]);
       } else {
         toast.error(data?.message || data?.error || "Failed to submit form.");
       }
     } catch (error) {
       console.error("Error submitting form:", error);
-      toast.error("Error submitting form. Please try again.");
+      toast.error("Network request failed. Please check your connection and try again.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -371,16 +387,21 @@ const CompanyForm = () => {
             <button
               type="button"
               onClick={addCompany}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-1 transition-colors"
+              disabled={isSubmitting}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-1 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Plus size={16} />
               Add Another Company
             </button>
             <button
               type="submit"
-              className="inline-flex items-center justify-center rounded-md bg-[#192aac] px-8 py-2.5 text-sm font-semibold text-white hover:from-slate-800 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-800 focus:ring-offset-2 transition-all"
+              disabled={isSubmitting}
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-[#192aac] px-8 py-2.5 text-sm font-semibold text-white hover:bg-[#12194e] focus:outline-none focus:ring-2 focus:ring-blue-800 focus:ring-offset-2 transition-all disabled:cursor-not-allowed disabled:opacity-70"
             >
-              Submit Companies
+              {isSubmitting && (
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              )}
+              {isSubmitting ? "Submitting..." : "Submit Companies"}
             </button>
           </div>
         </form>

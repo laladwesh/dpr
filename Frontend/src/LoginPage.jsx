@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { useAuth } from "./context/AuthProvider";
 import { useLocation, useNavigate } from "react-router-dom";
-import { toast } from "react-toastify";
+import toast from "react-hot-toast";
 import { Mail } from "lucide-react";
 
 function LoginPage() {

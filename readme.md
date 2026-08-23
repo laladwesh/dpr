@@ -17,8 +17,8 @@ Frontend dev server: http://localhost:5173/listing-ccd/ (calls the backend direc
 
 Copy `backend/env.sample` to `backend/.env` and `Frontend/env.sample` to
 `Frontend/.env` first, and fill in real secrets (Mongo URI, Azure app
-credentials, Firebase config). `BASE_PATH` (backend) and `VITE_BASE_URL`
-(frontend) must always match.
+credentials). `BASE_PATH` (backend) and `VITE_BASE_URL` (frontend) must
+always match.
 
 ## Deploying on the server (SSH)
 
@@ -27,9 +27,9 @@ ssh you@server
 git clone https://github.com/laladwesh/dpr.git
 cd dpr
 
-cp .env.sample .env
+cp env.sample .env
 nano .env                      # BASE_PATH_NAME (default listing-ccd), PORT (default 6026),
-                                # VITE_* build args (Firebase config, VITE_API_BASE_URI blank)
+                                # VITE_API_BASE_URI (leave blank)
 
 cp backend/env.sample backend/.env
 nano backend/.env              # MONGODB_URI, Azure app creds, admin creds, session secret, etc.
