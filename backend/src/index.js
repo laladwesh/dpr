@@ -10,6 +10,7 @@ import { authGuard } from './middleware/auth.middleware.js';
 import path from 'path';
 import fs from 'fs';
 import Company from './models/company.model.js';
+import Listing from './models/listing.model.js';
 import User from './models/user.model.js';
 import csv from 'csv-parser';
 import xlsx from 'xlsx';
@@ -37,6 +38,136 @@ const normalizeCompanyName = (name) =>
   String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const VALID_STATUSES = [
+  "onboarded",
+  "ongoing",
+  "yet to contact",
+  "first email sent",
+  "follow up sent",
+  "rejected",
+];
+
+const LISTING_POPULATE = [
+  { path: "company", select: "name nameNormalized" },
+  { path: "listedBy", select: "name email" },
+  { path: "proposedBy", select: "name email" },
+  { path: "assignedSC", select: "name email" },
+];
+
+const appendEvent = (listing, type, user, payload = {}) => {
+  listing.events.push({
+    type,
+    by: user?._id ?? null,
+    byRole: ["admin", "dpr", "sc"].includes(user?.role) ? user.role : "system",
+    byName: user?.name || user?.email || "System",
+    payload,
+  });
+};
+
+// Serialize a populated listing into the shape the frontend consumes.
+const serializeListing = (listing, { maskPocContacts = false } = {}) => {
+  const raw = listing.toObject ? listing.toObject() : listing;
+  const remarkEvents = (raw.events || []).filter(
+    (event) => event.type === "remark-added" && event.payload?.poc
+  );
+
+  return {
+    _id: raw._id,
+    companyId: raw.company?._id ?? null,
+    name: raw.company?.name || "Unknown company",
+    profiles: raw.profiles || [],
+    pocs: (raw.pocs || []).map((poc) => ({
+      _id: poc._id,
+      name: poc.name,
+      ...(maskPocContacts ? {} : { email: poc.email, phone: poc.phone }),
+      status: poc.status,
+      remarks: remarkEvents
+        .filter((event) => String(event.payload.poc) === String(poc._id))
+        .map((event) => ({
+          role: event.byRole,
+          author: event.byName || "Unknown user",
+          authorEmail: "",
+          text: event.payload.text,
+          createdAt: event.createdAt,
+        })),
+    })),
+    events: raw.events || [],
+    listedBy: raw.listedBy
+      ? { id: raw.listedBy._id, name: raw.listedBy.name, email: raw.listedBy.email }
+      : null,
+    proposedBy: raw.proposedBy
+      ? { id: raw.proposedBy._id, name: raw.proposedBy.name, email: raw.proposedBy.email }
+      : null,
+    dprEmail: raw.listedBy?.email || null,
+    dprUserName: raw.listedBy?.name || raw.listedBy?.email || "Unknown",
+    scEmail: raw.assignedSC?.email || null,
+    scUserName: raw.assignedSC?.email ? raw.assignedSC.name : null,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+  };
+};
+
+const findOrCreateCompany = async (name) => {
+  const trimmed = String(name || "").trim();
+  const normalized = normalizeCompanyName(trimmed);
+  let company = await Company.findOne({ nameNormalized: normalized });
+  if (!company) {
+    company = await Company.create({ name: trimmed });
+  }
+  return company;
+};
+
+// Create a listing (with its `listed` event) for a parsed company entry.
+const createListingForEntry = async ({ entry, user }) => {
+  const company = await findOrCreateCompany(entry.name);
+
+  const existingListing = await Listing.findOne({ company: company._id });
+  if (existingListing) {
+    return { conflict: company };
+  }
+
+  const cleanedPocs = [];
+  const importedRemarkTexts = [];
+  for (const poc of entry.pocs || []) {
+    const name = String(poc?.name || "").trim();
+    const email = String(poc?.email || "").trim().toLowerCase();
+    if (!name && !email) continue;
+    cleanedPocs.push({
+      name: name || "Unnamed contact",
+      email: email || undefined,
+      phone: String(poc?.phone || "").trim() || undefined,
+      status: VALID_STATUSES.includes(poc?.status) ? poc.status : "yet to contact",
+    });
+    importedRemarkTexts.push(String(poc?.remarks || "").trim());
+  }
+
+  const listing = new Listing({
+    company: company._id,
+    profiles: [
+      ...new Set(
+        (entry.profiles || []).map((profile) => String(profile || "").trim()).filter(Boolean)
+      ),
+    ],
+    listedBy: user._id,
+    proposedBy: user._id,
+    pocs: cleanedPocs,
+  });
+
+  appendEvent(listing, "listed", user);
+  listing.pocs.forEach((poc, index) => {
+    if (importedRemarkTexts[index]) {
+      appendEvent(listing, "remark-added", user, {
+        poc: poc._id,
+        text: importedRemarkTexts[index],
+      });
+    }
+  });
+
+  await listing.save();
+  await listing.populate(LISTING_POPULATE);
+  return { listing };
+};
 
 // Create temporary directory if not exists
 if (!fs.existsSync(tempDir)) {
@@ -72,7 +203,7 @@ async function parseCSV(filePath) {
           email: data.pocEmail?.trim(),
           phone: data.pocPhone?.trim(),
           status: (data.pocStatus || 'yet to contact').trim().toLowerCase(),
-          remarks: data.pocRemarks?.trim(),
+          remarks: data.pocRemarks?.trim() || '',
         };
 
         if (!companiesMap.has(companyName)) {
@@ -122,7 +253,7 @@ async function parseExcel(filePath) {
         email: row.pocEmail || '',
         phone: row.pocPhone || '',
         status: row.pocStatus || 'yet to contact',
-        remarks: row.pocRemarks || '',
+        remarks: String(row.pocRemarks || row['poc remarks'] || '').trim(),
       });
     }
 
@@ -291,7 +422,7 @@ apiRouter.post('/api/get-user-role', authGuard, (req, res) => {
   }
 });
 
-// Search existing companies without loading the complete company list.
+// Search existing listings by company name without loading the complete list.
 apiRouter.get('/api/company-suggestions', authGuard, async (req, res) => {
   try {
     const query = normalizeCompanyName(req.query.q);
@@ -305,23 +436,27 @@ apiRouter.get('/api/company-suggestions', authGuard, async (req, res) => {
         { name: { $regex: `^${escapeRegex(query)}`, $options: 'i' } },
       ],
     })
-      .select('name nameNormalized profiles pocs dprEmail')
+      .select('name')
       .sort({ name: 1 })
       .limit(8)
       .lean();
 
-    const emails = [...new Set(matchingCompanies.map((company) => company.dprEmail).filter(Boolean))];
-    const users = await User.find({ email: { $in: emails } }).select('email name').lean();
-    const userNames = new Map(users.map((user) => [user.email, user.name]));
+    const listings = await Listing.find({ company: { $in: matchingCompanies.map((c) => c._id) } })
+      .populate(LISTING_POPULATE)
+      .lean();
+
+    const nameById = new Map(matchingCompanies.map((company) => [String(company._id), company.name]));
 
     return res.json({
       success: true,
-      companies: matchingCompanies.map((company) => ({
-        id: company._id,
-        name: company.name,
-        profiles: company.profiles || [],
-        pocs: (company.pocs || []).map(({ name, status }) => ({ name, status })),
-        listedBy: userNames.get(company.dprEmail) || company.dprEmail || 'Unknown',
+      companies: listings.map((listing) =>
+        serializeListing(listing, { maskPocContacts: true })
+      ).map((listing) => ({
+        id: listing._id,
+        name: nameById.get(String(listing.companyId)) || listing.name,
+        profiles: listing.profiles,
+        pocs: listing.pocs.map(({ name, status }) => ({ name, status })),
+        listedBy: listing.dprUserName,
       })),
     });
   } catch (error) {
@@ -330,31 +465,30 @@ apiRouter.get('/api/company-suggestions', authGuard, async (req, res) => {
   }
 });
 
-// Add companies from request body
+// Add companies from request body (creates a Company identity + a Listing)
 apiRouter.post('/api/add-companies', authGuard, async (req, res) => {
   try {
     const { companies } = req.body;
     const user = req.user;
-    const dprEmail = user.email;
 
     if (user.role === 'sc') {
       return res.status(403).json({ success: false, message: 'SC users cannot add companies' });
     }
 
-    if (!dprEmail || !companies || companies.length === 0) {
+    if (!companies || companies.length === 0) {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
-    const preparedCompanies = companies.map((company) => ({
+    const preparedEntries = companies.map((company) => ({
       ...company,
       name: String(company.name || '').trim(),
-      nameNormalized: normalizeCompanyName(company.name),
-      dprEmail,
     }));
+
     const namesInRequest = new Set();
-    const duplicateInRequest = preparedCompanies.find((company) => {
-      if (!company.nameNormalized || namesInRequest.has(company.nameNormalized)) return true;
-      namesInRequest.add(company.nameNormalized);
+    const duplicateInRequest = preparedEntries.find((company) => {
+      const normalized = normalizeCompanyName(company.name);
+      if (!normalized || namesInRequest.has(normalized)) return true;
+      namesInRequest.add(normalized);
       return false;
     });
 
@@ -362,22 +496,24 @@ apiRouter.post('/api/add-companies', authGuard, async (req, res) => {
       return res.status(409).json({ success: false, message: `Duplicate company: ${duplicateInRequest.name}` });
     }
 
-    const existingCompany = await Company.findOne({
-      $or: [
-        { nameNormalized: { $in: preparedCompanies.map((company) => company.nameNormalized) } },
-        { name: { $in: preparedCompanies.map((company) => company.name) } },
-      ],
-    }).select('name').lean();
-    if (existingCompany) {
-      return res.status(409).json({
-        success: false,
-        message: `${existingCompany.name} is already listed. Please use the existing company instead.`,
-      });
+    const createdListings = [];
+    for (const entry of preparedEntries) {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await createListingForEntry({ entry, user });
+      if (result.conflict) {
+        return res.status(409).json({
+          success: false,
+          message: `${result.conflict.name} is already listed. Please use the existing company instead.`,
+        });
+      }
+      createdListings.push(result.listing);
     }
 
-    await Company.insertMany(preparedCompanies);
-
-    res.status(201).json({ success: true, message: 'Companies added successfully' });
+    res.status(201).json({
+      success: true,
+      message: 'Companies added successfully',
+      listings: createdListings.map((listing) => serializeListing(listing)),
+    });
   } catch (error) {
     if (error.code === 11000) {
       return res.status(409).json({
@@ -385,6 +521,7 @@ apiRouter.post('/api/add-companies', authGuard, async (req, res) => {
         message: 'One of these companies was added by another user. Please search again.',
       });
     }
+    console.error('Error adding companies', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
@@ -393,14 +530,13 @@ apiRouter.post('/api/add-companies', authGuard, async (req, res) => {
 apiRouter.post('/api/add-company-with-file', authGuard, async (req, res) => {
   try {
     const user = req.user;
-    const dprEmail = user.email;
 
     if (user.role === 'sc') {
       return res.status(403).json({ success: false, message: 'SC users cannot upload companies' });
     }
 
-    if (!user || !user.email) {
-      return res.status(400).json({ message: 'User is not authenticated or email is missing' });
+    if (!user || !user._id) {
+      return res.status(400).json({ message: 'User is not authenticated' });
     }
 
     if (!req.files || !req.files.file) {
@@ -432,38 +568,56 @@ apiRouter.post('/api/add-company-with-file', authGuard, async (req, res) => {
       return res.status(400).json({ message: 'No valid company data found in file' });
     }
 
-const savedCompanies = [];
+    const savedListings = [];
 
-for (const company of companies) {
-  const existing = await Company.findOne({ name: company.name });
+    for (const entry of companies) {
+      const existingListing = await Listing.findOne({
+        company: await Company.findOne({ nameNormalized: normalizeCompanyName(entry.name) }).select('_id'),
+      });
 
-  if (existing) {
-    const updatedProfiles = Array.from(new Set([
-      ...existing.profiles,
-      ...(company.profiles || [])
-    ]));
+      if (existingListing) {
+        // Merge into the existing listing: union profiles, add unseen POCs.
+        const mergedProfiles = [
+          ...new Set([...(existingListing.profiles || []), ...(entry.profiles || [])]),
+        ];
+        const profilesChanged =
+          mergedProfiles.length !== (existingListing.profiles || []).length;
+        if (profilesChanged) {
+          existingListing.profiles = mergedProfiles;
+          appendEvent(existingListing, 'profiles-updated', user, { profiles: mergedProfiles });
+        }
 
-    const existingEmails = new Set(existing.pocs.map(p => p.email));
-    const newPocs = (company.pocs || []).filter(p => !existingEmails.has(p.email));
-    const updatedPocs = [...existing.pocs, ...newPocs];
+        const existingEmails = new Set(
+          existingListing.pocs.map((poc) => String(poc.email || '').toLowerCase()).filter(Boolean)
+        );
+        for (const poc of entry.pocs || []) {
+          const email = String(poc?.email || '').trim().toLowerCase();
+          if (!email || existingEmails.has(email)) continue;
+          existingListing.pocs.push({
+            name: String(poc.name || 'Unnamed contact').trim(),
+            email,
+            phone: String(poc.phone || '').trim() || undefined,
+            status: VALID_STATUSES.includes(poc.status) ? poc.status : 'yet to contact',
+          });
+          appendEvent(existingListing, 'poc-added', user, {
+            poc: existingListing.pocs[existingListing.pocs.length - 1]._id,
+            pocName: poc.name,
+          });
+        }
 
-    existing.profiles = updatedProfiles;
-    existing.pocs = updatedPocs;
-    existing.dprEmail = dprEmail;
+        await existingListing.save();
+        await existingListing.populate(LISTING_POPULATE);
+        savedListings.push(existingListing);
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        const result = await createListingForEntry({ entry, user });
+        if (result.listing) {
+          savedListings.push(result.listing);
+        }
+      }
+    }
 
-    await existing.save();
-    savedCompanies.push(existing);
-  } else {
-    const newCompany = await Company.create({
-      ...company,
-      dprEmail,
-    });
-    savedCompanies.push(newCompany);
-  }
-}
-
-
-    res.status(201).json({ message: `Successfully added ${savedCompanies.length} companies`, companies: savedCompanies });
+    res.status(201).json({ message: `Successfully added ${savedListings.length} companies`, companies: savedListings.map((listing) => serializeListing(listing)) });
   } catch (error) {
     res.status(500).json({ message: 'Internal server error', error: error.message });
   }
@@ -484,7 +638,7 @@ apiRouter.post('/api/get-sc-users', authGuard, async (req, res) => {
   }
 });
 
-// Delete company
+// Delete listing (and its company identity if no other listing references it)
 apiRouter.delete('/api/delete-company', authGuard, async (req, res) => {
   try {
     const { companyId } = req.body;
@@ -498,9 +652,14 @@ apiRouter.delete('/api/delete-company', authGuard, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing companyId' });
     }
 
-    const deleted = await Company.findByIdAndDelete(companyId);
-    if (!deleted) {
+    const deletedListing = await Listing.findByIdAndDelete(companyId);
+    if (!deletedListing) {
       return res.status(404).json({ success: false, message: 'Company not found' });
+    }
+
+    const remainingListings = await Listing.countDocuments({ company: deletedListing.company });
+    if (remainingListings === 0) {
+      await Company.findByIdAndDelete(deletedListing.company);
     }
 
     res.status(200).json({ success: true, message: 'Company deleted successfully' });
@@ -509,76 +668,46 @@ apiRouter.delete('/api/delete-company', authGuard, async (req, res) => {
   }
 });
 
-// Get all companies
+// Get all listings
 apiRouter.post('/api/get-all-companies', authGuard, async (req, res) => {
   try {
     const { filter = "all" } = req.body || {};
     const user = req.user;
-    const normalizedUserEmail = String(user.email || "").toLowerCase();
-    let query = Company.find({});
+    let query = Listing.find({});
 
     if (user.role === "dpr") {
-      query = query.select("-pocs.phone -pocs.email");
       if (filter === "listed-by-me") {
-        query = query.where({ dprEmail: normalizedUserEmail });
+        query = query.where({ listedBy: user._id });
       }
     } else if (user.role === "sc") {
       if (filter === "assigned-to-me") {
-        query = query.where({ scEmail: normalizedUserEmail });
+        query = query.where({ assignedSC: user._id });
       }
     } else if (user.role === "admin") {
       if (filter === "unassigned") {
         query = query.where({
-          $or: [
-            { scEmail: { $exists: false } },
-            { scEmail: null },
-            { scEmail: "" },
-          ],
+          $or: [{ assignedSC: null }, { assignedSC: { $exists: false } }],
         });
       } else if (filter === "assigned") {
-        query = query.where({ scEmail: { $ne: null, $ne: "" } });
+        query = query.where({ assignedSC: { $ne: null } });
       }
     }
 
-    const allCompanies = await query.lean();
-    const emailsToLookup = [
-      ...new Set(
-        allCompanies.flatMap((company) => {
-          const emails = [];
-          if (company.dprEmail) emails.push(String(company.dprEmail).toLowerCase());
-          if (company.scEmail) emails.push(String(company.scEmail).toLowerCase());
-          return emails;
-        })
-      ),
-    ];
-
-    const users = await User.find({ email: { $in: emailsToLookup } })
-      .select("name email")
-      .lean();
-
-    const userMap = new Map(users.map((entry) => [String(entry.email).toLowerCase(), entry]));
-
-    const companiesWithNames = allCompanies.map((company) => ({
-      ...company,
-      dprUserName: userMap.get(String(company.dprEmail || "").toLowerCase())?.name || company.dprEmail || "Unknown",
-      scUserName: company.scEmail
-        ? userMap.get(String(company.scEmail || "").toLowerCase())?.name || null
-        : null,
-    }));
+    const listings = await query.populate(LISTING_POPULATE).lean();
+    const maskPocContacts = user.role === "dpr";
 
     res.status(200).json({
       success: true,
       message: "Companies fetched successfully",
-      companies: companiesWithNames,
+      companies: listings.map((listing) => serializeListing(listing, { maskPocContacts })),
     });
-
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Internal server error" });
   }
 });
 
-// Assign SC to company
+// Assign SC to a listing
 apiRouter.post('/api/assign-sc', authGuard, async (req, res) => {
   try {
     const { companyId, scEmail } = req.body;
@@ -598,30 +727,32 @@ apiRouter.post('/api/assign-sc', authGuard, async (req, res) => {
       return res.status(404).json({ success: false, message: "SC user not found" });
     }
 
-    const company = await Company.findById(companyId);
-    if (!company) {
+    const listing = await Listing.findById(companyId);
+    if (!listing) {
       return res.status(404).json({ success: false, message: "Company not found" });
     }
 
-    const updatedCompany = await Company.findByIdAndUpdate(
-      companyId,
-      { scEmail: normalizedScEmail },
-      { new: true }
-    );
+    const previousSC = listing.assignedSC;
+    listing.assignedSC = targetUser._id;
+    appendEvent(listing, "sc-assigned", user, {
+      scEmail: normalizedScEmail,
+      from: previousSC ? String(previousSC) : null,
+    });
+    await listing.save();
+    await listing.populate(LISTING_POPULATE);
 
-    res.status(200).json({ success: true, message: "SC assigned successfully", company: updatedCompany });
+    res.status(200).json({ success: true, message: "SC assigned successfully", company: serializeListing(listing) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-// Update company profiles
+// Update listing profiles
 apiRouter.post('/api/update-company-profiles', authGuard, async (req, res) => {
   try {
     const { companyId, profiles } = req.body;
     const user = req.user;
-    const normalizedUserEmail = String(user.email || "").toLowerCase();
 
     if (user.role !== "admin" && user.role !== "sc") {
       return res.status(403).json({ success: false, message: "Only admins and SCs can update profiles" });
@@ -631,14 +762,14 @@ apiRouter.post('/api/update-company-profiles', authGuard, async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
-    const company = await Company.findById(companyId);
-    if (!company) {
+    const listing = await Listing.findById(companyId);
+    if (!listing) {
       return res.status(404).json({ success: false, message: "Company not found" });
     }
 
     if (user.role === "sc") {
-      const currentScEmail = String(company.scEmail || "").toLowerCase();
-      if (currentScEmail && currentScEmail !== normalizedUserEmail) {
+      const isAssigned = listing.assignedSC && String(listing.assignedSC) === String(user._id);
+      if (!isAssigned) {
         return res.status(403).json({ success: false, message: "SC can only update profiles for companies assigned to them" });
       }
     }
@@ -651,17 +782,19 @@ apiRouter.post('/api/update-company-profiles', authGuard, async (req, res) => {
       )
     );
 
-    company.profiles = cleanedProfiles;
-    await company.save();
+    listing.profiles = cleanedProfiles;
+    appendEvent(listing, "profiles-updated", user, { profiles: cleanedProfiles });
+    await listing.save();
+    await listing.populate(LISTING_POPULATE);
 
-    res.status(200).json({ success: true, message: "Profiles updated successfully", company });
+    res.status(200).json({ success: true, message: "Profiles updated successfully", company: serializeListing(listing) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-// Update POC status
+// Update POC status (records a status-changed event)
 apiRouter.post('/api/update-poc-status', authGuard, async (req, res) => {
   try {
     const { companyId, pocId, status } = req.body;
@@ -671,32 +804,38 @@ apiRouter.post('/api/update-poc-status', authGuard, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only admins and SCs can update status' });
     }
 
-    if (!companyId || !pocId || !status) {
-      return res.status(400).json({ message: 'Missing required fields' });
+    if (!companyId || !pocId || !status || !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ message: 'Missing or invalid required fields' });
     }
 
-    const company = await Company.findOneAndUpdate(
-      { _id: companyId, 'pocs._id': pocId },
-      { $set: { 'pocs.$.status': status } },
-      { new: true }
-    );
-
-    if (!company) {
+    const listing = await Listing.findById(companyId);
+    if (!listing) {
       return res.status(404).json({ message: 'Company or POC not found' });
     }
 
-    res.status(200).json({ success: true, message: 'POC status updated', company });
+    const poc = listing.pocs.id(pocId);
+    if (!poc) {
+      return res.status(404).json({ message: 'Company or POC not found' });
+    }
+
+    const from = poc.status;
+    poc.status = status;
+    appendEvent(listing, 'status-changed', user, { poc: poc._id, pocName: poc.name, from, to: status });
+    await listing.save();
+    await listing.populate(LISTING_POPULATE);
+
+    res.status(200).json({ success: true, message: 'POC status updated', company: serializeListing(listing) });
   } catch (error) {
+    console.error('Error updating POC status', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// Update POC remarks
+// Update POC remarks (records a remark-added event)
 apiRouter.post('/api/update-poc-remarks', authGuard, async (req, res) => {
   try {
     const { companyId, pocId, remarks } = req.body;
     const user = req.user;
-    const normalizedRole = user.role === 'admin' ? 'admin' : user.role;
 
     if (!['admin', 'sc', 'dpr'].includes(user.role)) {
       return res.status(403).json({ success: false, message: 'Only admins, SCs, and DPR users can update remarks' });
@@ -707,42 +846,21 @@ apiRouter.post('/api/update-poc-remarks', authGuard, async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
-    const company = await Company.findOne({ _id: companyId, 'pocs._id': pocId });
-    if (!company) {
+    const listing = await Listing.findById(companyId);
+    if (!listing) {
       return res.status(404).json({ message: 'Company or POC not found' });
     }
 
-    const poc = company.pocs.id(pocId);
+    const poc = listing.pocs.id(pocId);
     if (!poc) {
       return res.status(404).json({ message: 'POC not found' });
     }
 
-    const existingRemarks = Array.isArray(poc.remarks)
-      ? poc.remarks
-      : typeof poc.remarks === 'string' && poc.remarks.trim()
-        ? [{
-            role: 'dpr',
-            author: 'Previous note',
-            authorEmail: '',
-            text: poc.remarks.trim(),
-            createdAt: new Date().toISOString(),
-          }]
-        : [];
+    appendEvent(listing, 'remark-added', user, { poc: poc._id, text: trimmedRemark });
+    await listing.save();
+    await listing.populate(LISTING_POPULATE);
 
-    poc.remarks = [
-      ...existingRemarks,
-      {
-        role: normalizedRole,
-        author: user.name || user.email || 'Unknown user',
-        authorEmail: user.email || '',
-        text: trimmedRemark,
-        createdAt: new Date().toISOString(),
-      },
-    ];
-
-    await company.save();
-
-    res.status(200).json({ success: true, message: 'POC remarks updated', company });
+    res.status(200).json({ success: true, message: 'POC remarks updated', company: serializeListing(listing) });
   } catch (error) {
     console.error('Error updating POC remarks', error);
     res.status(500).json({ message: 'Internal server error' });

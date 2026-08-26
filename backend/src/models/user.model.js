@@ -22,13 +22,6 @@ const userSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    companies: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Company",
-        index: true,
-      },
-    ],
   },
   {
     timestamps: true,

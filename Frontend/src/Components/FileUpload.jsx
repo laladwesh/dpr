@@ -160,7 +160,7 @@ const FileUpload = () => {
         </div>
 
         {uploadedCompanies.length > 0 && (
-          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+          <div className="rounded-xl overflow-hidden">
             <div className="border-b border-slate-200 px-6 py-4">
               <h2 className="text-sm font-bold text-slate-900">
                 {uploadedCompanies.length} compan{uploadedCompanies.length === 1 ? "y" : "ies"} processed

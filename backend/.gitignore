@@ -26,3 +26,5 @@ Thumbs.db
 
 
 .env
+# Served frontend build (generated at Docker build time)
+public/

@@ -277,6 +277,8 @@ export default function CompanyPortal() {
               >
                 <option value="all">All statuses</option>
                 <option value="yet to contact">Yet to contact</option>
+                <option value="first email sent">First email sent</option>
+                <option value="follow up sent">Follow up sent</option>
                 <option value="ongoing">Ongoing</option>
                 <option value="onboarded">Onboarded</option>
                 <option value="rejected">Rejected</option>
@@ -315,9 +317,9 @@ export default function CompanyPortal() {
         </div>
 
         {/* Master List Container - No shadows, clean border */}
-        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <div className="rounded-xl overflow-hidden">
           {filteredCompanies.length > 0 ? (
-            <div className="flex flex-col divide-y divide-slate-200">
+            <div className="flex flex-col gap-3">
               {filteredCompanies.map((company) => (
                 <Company
                   key={company._id}
@@ -593,9 +595,9 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
   };
 
   return (
-    <div className="group transition-colors duration-200">
-      <div 
-        className={`flex cursor-pointer items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors ${isOpen ? "bg-slate-50 border-b border-slate-200" : "bg-white"}`}
+    <div className="group rounded-xl border border-slate-300 bg-white shadow-sm overflow-hidden transition-colors duration-200">
+      <div
+        className={`flex cursor-pointer items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors ${isOpen ? "bg-slate-100 border-b border-slate-300" : "bg-white rounded-t-[10px]"}`}
         onClick={() => setIsOpen((open) => !open)}
       >
         <div className="flex-1 min-w-0 pr-6">
@@ -617,14 +619,14 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
               {currentScName || currentScEmail || <span className="text-slate-400 italic font-normal">Unassigned</span>}
             </div>
           </div>
-          <div className={`flex h-8 w-8 items-center justify-center rounded-full bg-white border border-slate-200 text-slate-400 transition-all duration-300 ${isOpen ? "rotate-180 bg-blue-600 text-white border-blue-600" : "group-hover:border-slate-300 group-hover:text-slate-600"}`}>
-            <ChevronDown size={18} />
+          <div className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors duration-300 ${isOpen ? "bg-blue-600 border-blue-600" : "bg-white border-slate-200 group-hover:border-slate-300"} ${isOpen ? "text-white" : "text-slate-400 group-hover:text-slate-600"}`}>
+            <ChevronDown size={18} className={`transition-transform duration-300 ${isOpen ? "rotate-180" : ""}`} />
           </div>
         </div>
       </div>
 
       {isOpen && (
-        <div className="bg-slate-50/50 px-6 py-6">
+        <div className="bg-slate-50 px-6 py-6">
           {(userRole === "admin" || userRole === "sc") && (
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg bg-white p-4 border border-slate-200">
               <div>
@@ -838,10 +840,12 @@ function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus,
   };
 
   const statusColors = {
-    "yet to contact": "bg-slate-100 text-slate-700 border-slate-200",
-    "ongoing": "bg-blue-50 text-blue-700 border-blue-200",
-    "onboarded": "bg-teal-50 text-teal-700 border-teal-200",
-    "rejected": "bg-red-50 text-red-700 border-red-200"
+    "yet to contact": "bg-slate-200 text-slate-800 border-slate-400",
+    "first email sent": "bg-violet-200 text-violet-900 border-violet-500",
+    "follow up sent": "bg-amber-200 text-amber-900 border-amber-500",
+    "ongoing": "bg-blue-200 text-blue-900 border-blue-500",
+    "onboarded": "bg-emerald-200 text-emerald-900 border-emerald-600",
+    "rejected": "bg-red-300 text-red-950 border-red-600"
   };
 
   return (
@@ -871,6 +875,8 @@ function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus,
             disabled={(userRole !== "admin" && userRole !== "sc") || isSavingStatus}
           >
             <option value="yet to contact">Yet to contact</option>
+            <option value="first email sent">First email sent</option>
+            <option value="follow up sent">Follow up sent</option>
             <option value="ongoing">Ongoing</option>
             <option value="onboarded">Onboarded</option>
             <option value="rejected">Rejected</option>
@@ -899,7 +905,7 @@ function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus,
               className="w-full rounded-lg border border-slate-300 bg-white p-3 text-sm font-medium text-slate-800 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 min-h-[80px]"
               placeholder={`Add a ${userRole === 'sc' ? 'SC' : userRole === 'dpr' ? 'DPR' : 'admin'} remark...`}
             />
-            <div className="flex gap-3">
+            <div className="flex gap-3 pb-4 mb-1">
               <button
                 onClick={handleSave}
                 disabled={isSavingRemark || !editedRemark.trim()}

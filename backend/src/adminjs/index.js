@@ -5,6 +5,7 @@ import AdminJS from "adminjs";
 import AdminJSExpress from "@adminjs/express";
 import * as AdminJSMongoose from "@adminjs/mongoose";
 import Company from "../models/company.model.js";
+import Listing from "../models/listing.model.js";
 import User from "../models/user.model.js";
 
 const MASTER_ADMIN = {
@@ -23,7 +24,7 @@ export const admin = new AdminJS({
   rootPath: `${BASE_PATH}/admin`,
   loginPath: `${BASE_PATH}/admin/login`,
   logoutPath: `${BASE_PATH}/admin/logout`,
-  resources: [Company, User],
+  resources: [Company, Listing, User],
 });
 
 export const adminRouter = AdminJSExpress.buildAuthenticatedRouter(

@@ -173,7 +173,7 @@ const CompanyForm = () => {
           {companies.map((company, cIndex) => (
             <div
               key={cIndex}
-              className="rounded-xl border border-slate-200 bg-white overflow-hidden"
+              className="rounded-xl overflow-hidden"
             >
               <div className="p-6 sm:p-8">
                 

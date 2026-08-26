@@ -2,28 +2,6 @@ import mongoose from "mongoose";
 
 const companySchema = new mongoose.Schema(
   {
-    dprUser: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      index: true,
-    },
-    scUser: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      index: true,
-    },
-    dprEmail: {
-      type: String,
-      required: true,
-      trim: true,
-      lowercase: true,
-    },
-    scEmail: {
-      type: String,
-      trim: true,
-      default: null,
-      lowercase: true,
-    },
     name: {
       type: String,
       required: true,
@@ -35,66 +13,6 @@ const companySchema = new mongoose.Schema(
       index: true,
       unique: true,
       sparse: true,
-    },
-    pocs: [
-      {
-        _id: {
-          type: mongoose.Schema.Types.ObjectId,
-          auto: true,
-        },
-        name: {
-          type: String,
-          required: true,
-          trim: true,
-        },
-        email: {
-          type: String,
-          trim: true,
-          lowercase: true,
-        },
-        phone: {
-          type: String,
-          trim: true,
-        },
-        status: {
-          type: String,
-          enum: ["onboarded", "ongoing", "yet to contact", "rejected"],
-          default: "yet to contact",
-        },
-        remarks: [
-          {
-            role: {
-              type: String,
-              enum: ["sc", "dpr", "admin"],
-              required: true,
-            },
-            author: {
-              type: String,
-              trim: true,
-              required: true,
-            },
-            authorEmail: {
-              type: String,
-              trim: true,
-              lowercase: true,
-              default: "",
-            },
-            text: {
-              type: String,
-              trim: true,
-              required: true,
-            },
-            createdAt: {
-              type: Date,
-              default: Date.now,
-            },
-          },
-        ],
-      },
-    ],
-    profiles: {
-      type: [String],
-      default: [],
     },
   },
   {
