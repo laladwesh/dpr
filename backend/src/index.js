@@ -284,8 +284,11 @@ if (!hasClientBuild) {
   app.get(`${BASE_PATH}/`, (req, res) => res.send('API is running...'));
 }
 
-const getFrontendUrl = () =>
-  `${process.env.FRONTEND_URL || "http://localhost:5173"}${process.env.FRONTEND_BASE_PATH || BASE_PATH}`;
+// Path-only (no host) so this resolves relative to whatever origin the
+// browser is actually on - the frontend and backend are served from the
+// same origin (see hasClientBuild above), so this can't drift out of sync
+// with a separately-configured FRONTEND_URL the way an absolute URL could.
+const getFrontendPath = () => process.env.FRONTEND_BASE_PATH || BASE_PATH;
 const getAzureRedirectUri = () =>
   process.env.AZURE_REDIRECT_URI ||
   `${process.env.API_PUBLIC_URL || `http://localhost:${process.env.PORT || 8081}`}${BASE_PATH}/api/auth/azure/callback`;
@@ -304,7 +307,7 @@ const appendCookie = (res, value) => {
 };
 
 const azureErrorRedirect = (res, error) =>
-  res.redirect(`${getFrontendUrl()}/login?error=${encodeURIComponent(error)}`);
+  res.redirect(`${getFrontendPath()}/login?error=${encodeURIComponent(error)}`);
 
 apiRouter.get('/api/auth/azure', (req, res) => {
   const { AZURE_CLIENT_ID, AZURE_TENANT, AZURE_SECRET } = process.env;
@@ -391,7 +394,7 @@ apiRouter.get('/api/auth/azure/callback', async (req, res) => {
       res,
       `dpr_oauth_state=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
     );
-    return res.redirect(`${getFrontendUrl()}/dashboard`);
+    return res.redirect(`${getFrontendPath()}/dashboard`);
   } catch (callbackError) {
     console.error('Azure authentication failed', callbackError);
     return azureErrorRedirect(res, 'azure_auth');
