@@ -309,6 +309,20 @@ const appendCookie = (res, value) => {
 const azureErrorRedirect = (res, error) =>
   res.redirect(`${getFrontendPath()}/login?error=${encodeURIComponent(error)}`);
 
+// Retries only on network-level failures (fetch throwing - DNS blips,
+// connection resets, timeouts). Never retries on an actual HTTP response
+// from Azure (4xx/5xx), since those are legitimate rejections and the
+// authorization code has already been consumed by the first attempt.
+const fetchWithRetry = async (url, options, retries = 2, delayMs = 400) => {
+  try {
+    return await fetch(url, options);
+  } catch (networkError) {
+    if (retries <= 0) throw networkError;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return fetchWithRetry(url, options, retries - 1, delayMs);
+  }
+};
+
 apiRouter.get('/api/auth/azure', (req, res) => {
   const { AZURE_CLIENT_ID, AZURE_TENANT, AZURE_SECRET } = process.env;
   if (!AZURE_CLIENT_ID || !AZURE_TENANT || !AZURE_SECRET) {
@@ -342,7 +356,7 @@ apiRouter.get('/api/auth/azure/callback', async (req, res) => {
 
   try {
     const { AZURE_CLIENT_ID, AZURE_TENANT, AZURE_SECRET } = process.env;
-    const tokenResponse = await fetch(
+    const tokenResponse = await fetchWithRetry(
       `https://login.microsoftonline.com/${AZURE_TENANT}/oauth2/v2.0/token`,
       {
         method: 'POST',
