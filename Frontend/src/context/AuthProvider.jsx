@@ -49,6 +49,9 @@ export const AuthProvider = ({ children }) => {
           setUser(data.user);
           setUserRole(data.user.role);
         } else {
+          if (data?.message && data.message !== "Authentication required") {
+            toast.error(data.message);
+          }
           setIsAuthenticated(false);
           setUser(null);
           setUserRole(null);

@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
-import { buildApiUrl, parseJsonResponse } from "../api";
+import { apiFetch, parseJsonResponse } from "../api";
 import { Plus, Trash2, X, Building, ChevronDown, ChevronUp, Search } from "lucide-react";
 
 const emptyCompany = () => ({
@@ -13,7 +12,6 @@ const emptyCompany = () => ({
 
 const CompanyForm = () => {
   const { userRole } = useAuth();
-  const navigate = useNavigate();
   const [companies, setCompanies] = useState([emptyCompany()]);
   const [suggestions, setSuggestions] = useState({});
   const [expandedSuggestion, setExpandedSuggestion] = useState(null);
@@ -29,10 +27,7 @@ const CompanyForm = () => {
 
       return setTimeout(async () => {
         try {
-          const response = await fetch(
-            `${buildApiUrl("/api/company-suggestions")}?q=${encodeURIComponent(query)}`,
-            { credentials: "include" }
-          );
+          const response = await apiFetch(`/api/company-suggestions?q=${encodeURIComponent(query)}`);
           const data = await parseJsonResponse(response);
           if (response.ok) {
             setSuggestions((current) => ({ ...current, [index]: data?.companies || [] }));
@@ -126,9 +121,8 @@ const CompanyForm = () => {
 
     setIsSubmitting(true);
     try {
-      const response = await fetch(buildApiUrl("/api/add-companies"), {
+      const response = await apiFetch("/api/add-companies", {
         method: "POST",
-        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -137,11 +131,7 @@ const CompanyForm = () => {
         }),
       });
 
-      if (response.status === 401) {
-        toast.error("Your session has expired. Please log in again.");
-        navigate("/login", { replace: true });
-        return;
-      }
+      if (response.status === 401) return;
 
       const data = await parseJsonResponse(response);
       if (response.ok) {

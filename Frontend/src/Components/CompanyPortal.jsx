@@ -1,15 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, Edit2, Mail, Search, Phone, Building } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
 import toast from "react-hot-toast";
 import Loader from "./Loader";
 import ConfirmDialog from "./ConfirmDialog";
-import { buildApiUrl, parseJsonResponse } from "../api";
+import { apiFetch, parseJsonResponse } from "../api";
 
 export default function CompanyPortal() {
   const { user, userRole, isAuthenticated } = useAuth();
-  const navigate = useNavigate();
   const [companies, setCompanies] = useState([]);
   const [filteredCompanies, setFilteredCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -72,9 +70,8 @@ export default function CompanyPortal() {
   const fetchAllCompanies = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(buildApiUrl("/api/get-all-companies"), {
+      const response = await apiFetch("/api/get-all-companies", {
         method: "POST",
-        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -82,31 +79,28 @@ export default function CompanyPortal() {
           filter,
         }),
       });
-      const data = await parseJsonResponse(response);
-      const message = data?.message;
-      const companies = data?.companies || [];
 
       if (response.status === 401) {
         setCompanies([]);
-        toast.error("Your session has expired. Please log in again.");
-        navigate("/login", { replace: true });
         return;
       }
 
+      const data = await parseJsonResponse(response);
+
       if (response.status !== 200) {
-        console.error("Error fetching companies:", message);
+        console.error("Error fetching companies:", data?.message);
         toast.error("Error fetching companies. Please try again later.");
         return;
       }
 
-      setCompanies(Array.isArray(companies) ? companies : []);
+      setCompanies(Array.isArray(data?.companies) ? data.companies : []);
     } catch (error) {
       console.error("Error fetching companies:", error);
       toast.error("Network request failed. Please try again later.");
     } finally {
       setLoading(false);
     }
-  }, [filter, navigate]);
+  }, [filter]);
 
   useEffect(() => {
     const filtered = companies.filter((company) => {
@@ -167,9 +161,8 @@ export default function CompanyPortal() {
     if (userRole !== "admin" && userRole !== "sc") return;
 
     try {
-      const response = await fetch(buildApiUrl("/api/get-sc-users"), {
+      const response = await apiFetch("/api/get-sc-users", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
@@ -373,9 +366,8 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
   const updatePOCStatus = async (pocId, status) => {
     if (userRole !== "admin" && userRole !== "sc") return;
     try {
-      const response = await fetch(buildApiUrl("/api/update-poc-status"), {
+      const response = await apiFetch("/api/update-poc-status", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId: id,
@@ -410,9 +402,8 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
   const updatePOCRemark = async (pocId, remarks) => {
     if (!['admin', 'sc', 'dpr'].includes(userRole)) return;
     try {
-      const response = await fetch(buildApiUrl("/api/update-poc-remarks"), {
+      const response = await apiFetch("/api/update-poc-remarks", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId: id,
@@ -452,9 +443,8 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
 
     setIsAssigningSc(true);
     try {
-      const response = await fetch(buildApiUrl("/api/assign-sc"), {
+      const response = await apiFetch("/api/assign-sc", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ companyId: id, scEmail: normalizedScEmail }),
       });
@@ -483,9 +473,8 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
   const handleDeleteCompany = async () => {
     setIsDeleting(true);
     try {
-      const response = await fetch(buildApiUrl("/api/delete-company"), {
+      const response = await apiFetch("/api/delete-company", {
         method: "DELETE",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId: id,
@@ -565,9 +554,8 @@ function Company({ name, profiles, pocs, id, currentScEmail, currentScName, setC
     }
     setIsSavingProfiles(true);
     try {
-      const response = await fetch(buildApiUrl("/api/update-company-profiles"), {
+      const response = await apiFetch("/api/update-company-profiles", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId: id,
