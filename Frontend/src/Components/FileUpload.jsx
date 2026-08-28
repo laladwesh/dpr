@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 import { UploadCloud, FileText, X, Download } from "lucide-react";
 import { buildApiUrl } from "../api";
+import { useUnsavedChangesWarning } from "../hooks/useUnsavedChangesWarning";
 
 const FileUpload = () => {
   const navigate = useNavigate();
@@ -11,6 +12,8 @@ const FileUpload = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedCompanies, setUploadedCompanies] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
+
+  useUnsavedChangesWarning(Boolean(file) && !isUploading);
 
   const acceptFile = (selectedFile) => {
     if (!selectedFile) return;
@@ -75,16 +78,8 @@ const FileUpload = () => {
   };
 
   return (
-    <div className="w-full font-sans text-slate-800 pb-12 pt-2">
-      <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 space-y-4">
-        <div className="border-b border-slate-200 pb-4 mb-4">
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">Upload Company Data</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Bulk-add companies from a spreadsheet instead of entering them one by one.
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white p-6 sm:p-8">
+    <div className="w-full max-w-3xl space-y-4 pb-12 font-sans text-slate-800">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 sm:p-8">
           <form className="space-y-6" onSubmit={handleSubmit}>
             <div
               onDragOver={(e) => {
@@ -160,7 +155,7 @@ const FileUpload = () => {
         </div>
 
         {uploadedCompanies.length > 0 && (
-          <div className="rounded-xl overflow-hidden">
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
             <div className="border-b border-slate-200 px-6 py-4">
               <h2 className="text-sm font-bold text-slate-900">
                 {uploadedCompanies.length} compan{uploadedCompanies.length === 1 ? "y" : "ies"} processed
@@ -212,7 +207,6 @@ const FileUpload = () => {
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 };

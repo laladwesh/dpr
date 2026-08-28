@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthProvider";
 import { apiFetch, parseJsonResponse } from "../api";
+import { useUnsavedChangesWarning } from "../hooks/useUnsavedChangesWarning";
 import { Plus, Trash2, X, Building, ChevronDown, ChevronUp, Search } from "lucide-react";
 
 const emptyCompany = () => ({
@@ -16,6 +17,18 @@ const CompanyForm = () => {
   const [suggestions, setSuggestions] = useState({});
   const [expandedSuggestion, setExpandedSuggestion] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const hasUnsavedData = useMemo(
+    () =>
+      companies.some(
+        (company) =>
+          company.name.trim() ||
+          company.profiles.some((profile) => profile.trim()) ||
+          company.pocs.some((poc) => poc.name.trim() || poc.email.trim() || poc.phone.trim() || poc.remarks.trim())
+      ),
+    [companies]
+  );
+  useUnsavedChangesWarning(hasUnsavedData && !isSubmitting);
 
   useEffect(() => {
     const timers = companies.map((company, index) => {
@@ -150,20 +163,12 @@ const CompanyForm = () => {
   };
 
   return (
-    <div className="w-full font-sans text-slate-800 pb-12 pt-2">
-      <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 space-y-4">
-        
-        {/* Header - Margins reduced to pull it closer to the toggle buttons above */}
-        <div className="border-b border-slate-200 pb-4 mb-4">
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">Add Companies</h1>
-          <p className="mt-1 text-sm text-slate-500">Fill in the details below to list new companies in the portal.</p>
-        </div>
-
-        <form className="space-y-6" onSubmit={handleSubmit}>
+    <div className="w-full pb-12 font-sans text-slate-800">
+      <form className="space-y-6" onSubmit={handleSubmit}>
           {companies.map((company, cIndex) => (
             <div
               key={cIndex}
-              className="rounded-xl overflow-hidden"
+              className="rounded-xl border border-slate-200 bg-white overflow-hidden"
             >
               <div className="p-6 sm:p-8">
                 
@@ -394,8 +399,7 @@ const CompanyForm = () => {
               {isSubmitting ? "Submitting..." : "Submit Companies"}
             </button>
           </div>
-        </form>
-      </div>
+      </form>
     </div>
   );
 };
