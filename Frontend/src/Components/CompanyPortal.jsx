@@ -862,12 +862,12 @@ function POC({ name, email, phone, status, remarks, updateRemarks, updateStatus,
             onChange={handleStatusChange}
             disabled={(userRole !== "admin" && userRole !== "sc") || isSavingStatus}
           >
-            <option value="yet to contact">Yet to contact</option>
-            <option value="first email sent">First email sent</option>
-            <option value="follow up sent">Follow up sent</option>
-            <option value="ongoing">Ongoing</option>
-            <option value="onboarded">Onboarded</option>
-            <option value="rejected">Rejected</option>
+            <option value="yet to contact" className="bg-white text-slate-800 font-normal">Yet to contact</option>
+            <option value="first email sent" className="bg-white text-slate-800 font-normal">First email sent</option>
+            <option value="follow up sent" className="bg-white text-slate-800 font-normal">Follow up sent</option>
+            <option value="ongoing" className="bg-white text-slate-800 font-normal">Ongoing</option>
+            <option value="onboarded" className="bg-white text-slate-800 font-normal">Onboarded</option>
+            <option value="rejected" className="bg-white text-slate-800 font-normal">Rejected</option>
           </select>
         </div>
       </div>
