@@ -13,6 +13,7 @@ const FileUpload = () => {
   const [uploadedCompanies, setUploadedCompanies] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
 
+  
   useUnsavedChangesWarning(Boolean(file) && !isUploading);
 
   const acceptFile = (selectedFile) => {
