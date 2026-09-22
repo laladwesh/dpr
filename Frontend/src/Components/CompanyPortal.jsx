@@ -15,6 +15,7 @@ export default function CompanyPortal() {
   const [profileFilter, setProfileFilter] = useState("all");
   const [listedByFilter, setListedByFilter] = useState("all");
   const [coordinatorFilter, setCoordinatorFilter] = useState("all");
+  const [addedByFilter, setAddedByFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [filter, setFilter] = useState("all");
   const [scUsers, setScUsers] = useState([]);
@@ -53,6 +54,20 @@ export default function CompanyPortal() {
 
     return Array.from(emails).sort();
   }, [scUsers, companies]);
+
+  // Who added (listed) each company - derived from the loaded listings.
+  const addedByMap = useMemo(() => {
+    const map = new Map();
+    companies.forEach((company) => {
+      const email = (company.dprEmail || "").toLowerCase();
+      if (email && !map.has(email)) {
+        map.set(email, company.dprUserName || email);
+      }
+    });
+    return map;
+  }, [companies]);
+
+  const addedByOptions = useMemo(() => Array.from(addedByMap.keys()).sort(), [addedByMap]);
 
   const matchesStatusFilter = useCallback(
     (company) => {
@@ -140,17 +155,21 @@ export default function CompanyPortal() {
         (coordinatorFilter === "unassigned" && !lowerCaseSCEmail) ||
         lowerCaseSCEmail === coordinatorFilter.toLowerCase();
 
+      const matchesAddedByFilter =
+        addedByFilter === "all" || lowerCaseDprEmail === addedByFilter.toLowerCase();
+
       return (
         matchesSearch &&
         matchesStatusFilter(company) &&
         matchesProfileFilter &&
         matchesListedByFilter &&
-        matchesCoordinatorFilter
+        matchesCoordinatorFilter &&
+        matchesAddedByFilter
       );
     });
 
     setFilteredCompanies(filtered);
-  }, [searchQuery, companies, profileFilter, listedByFilter, coordinatorFilter, statusFilter, user?.email, matchesStatusFilter]);
+  }, [searchQuery, companies, profileFilter, listedByFilter, coordinatorFilter, addedByFilter, statusFilter, user?.email, matchesStatusFilter]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -218,6 +237,7 @@ export default function CompanyPortal() {
                 setProfileFilter("all");
                 setListedByFilter("all");
                 setCoordinatorFilter("all");
+                setAddedByFilter("all");
                 setStatusFilter("all");
                 setSearchQuery("");
               }}
@@ -288,6 +308,24 @@ export default function CompanyPortal() {
                 >
                   <option value="all">Listed by anyone</option>
                   <option value="listed-by-me">Listed by me</option>
+                </select>
+              </div>
+            )}
+
+            {(userRole === "sc" || userRole === "admin") && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Added by</label>
+                <select
+                  value={addedByFilter}
+                  onChange={(e) => setAddedByFilter(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 transition-colors"
+                >
+                  <option value="all">Added by anyone</option>
+                  {addedByOptions.map((email) => (
+                    <option key={email} value={email}>
+                      {addedByMap.get(email) ? `${addedByMap.get(email)} (${email})` : email}
+                    </option>
+                  ))}
                 </select>
               </div>
             )}
