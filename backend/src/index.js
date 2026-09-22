@@ -39,6 +39,53 @@ const normalizeCompanyName = (name) =>
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// Canonical header for company bulk-upload files (CSV first row / Excel
+// first row). Uploads whose headers don't match are rejected so users can't
+// accidentally import the wrong file. Compare against Frontend/public/sample.csv.
+const UPLOAD_HEADERS = [
+  "companyName",
+  "profiles",
+  "pocName",
+  "pocEmail",
+  "pocPhone",
+  "pocStatus",
+  "pocRemarks",
+];
+
+const normalizeHeader = (value) =>
+  String(value || "")
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLowerCase();
+
+class UploadValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UploadValidationError";
+    this.statusCode = 400;
+  }
+}
+
+const assertUploadHeaders = (actualHeaders) => {
+  const expected = new Set(UPLOAD_HEADERS.map(normalizeHeader));
+  const actual = new Set((actualHeaders || []).map(normalizeHeader));
+
+  const missing = [...expected].filter((header) => !actual.has(header));
+  const unexpected = [...actual].filter((header) => header && !expected.has(header));
+
+  if (missing.length > 0 || unexpected.length > 0) {
+    const details = [
+      missing.length > 0 ? `missing columns: ${missing.join(", ")}` : null,
+      unexpected.length > 0 ? `unexpected columns: ${unexpected.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join("; ");
+    throw new UploadValidationError(
+      `Invalid file format (${details}). Please use the sample CSV template: expected header "${UPLOAD_HEADERS.join(",")}".`
+    );
+  }
+};
+
 const VALID_STATUSES = [
   "onboarded",
   "ongoing",
@@ -108,6 +155,99 @@ const serializeListing = (listing, { maskPocContacts = false } = {}) => {
   };
 };
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Annotate parsed upload entries with per-row / per-contact issues so the
+// user can fix them in the browser before accepting. Blocking ("error")
+// issues must be resolved or the row removed before import.
+const buildUploadPreview = async (entries) => {
+  const preview = [];
+
+  for (const entry of entries || []) {
+    const name = String(entry?.name || '').trim();
+    const issues = [];
+    if (!name) {
+      issues.push({ level: 'error', message: 'Missing company name — type it in to import this row.' });
+    }
+
+    const profiles = [
+      ...new Set(
+        (entry?.profiles || []).map((profile) => String(profile || '').trim()).filter(Boolean)
+      ),
+    ];
+    if (!profiles.length) {
+      issues.push({ level: 'error', message: 'Add at least one profile offered by this company.' });
+    }
+
+    const pocs = (entry?.pocs || []).map((poc) => {
+      const cleaned = {
+        name: String(poc?.name || '').trim(),
+        email: String(poc?.email || '').trim(),
+        phone: String(poc?.phone || '').trim(),
+        remarks: String(poc?.remarks || '').trim(),
+        rowNumber: poc?.rowNumber ?? null,
+        issues: [],
+      };
+
+      const rawStatus = String(poc?.status || '').trim().toLowerCase();
+      cleaned.status = VALID_STATUSES.includes(rawStatus) ? rawStatus : 'yet to contact';
+      if (rawStatus && cleaned.status !== rawStatus) {
+        cleaned.issues.push({
+          level: 'warning',
+          message: `Unknown status "${poc.status}" — will be saved as "yet to contact".`,
+        });
+      }
+      if (!cleaned.name) {
+        cleaned.issues.push({
+          level: 'error',
+          message: 'Contact name is required — fill it in.',
+        });
+      } else if (!cleaned.email) {
+        cleaned.issues.push({
+          level: 'warning',
+          message: 'No email — duplicates cannot be detected when merging.',
+        });
+      } else if (!EMAIL_RE.test(cleaned.email)) {
+        cleaned.issues.push({
+          level: 'warning',
+          message: `"${cleaned.email}" doesn't look like a valid email address.`,
+        });
+      }
+      return cleaned;
+    });
+
+    if (!pocs.length) {
+      issues.push({ level: 'warning', message: 'No contacts for this company.' });
+    }
+
+    let alreadyListed = false;
+    if (name) {
+      // eslint-disable-next-line no-await-in-loop
+      const companyDoc = await Company.findOne({ nameNormalized: normalizeCompanyName(name) }).select('_id');
+      if (companyDoc) {
+        // eslint-disable-next-line no-await-in-loop
+        alreadyListed = Boolean(await Listing.exists({ company: companyDoc._id }));
+      }
+    }
+
+    const canImport =
+      !issues.some((issue) => issue.level === 'error') &&
+      !pocs.some((poc) => poc.issues.some((issue) => issue.level === 'error'));
+
+    preview.push({
+      name,
+      profiles,
+      pocs,
+      rowNumbers: entry?.rowNumbers || [],
+      issues,
+      alreadyListed,
+      canImport,
+    });
+  }
+
+  return preview;
+};
+
 const findOrCreateCompany = async (name) => {
   const trimmed = String(name || "").trim();
   const normalized = normalizeCompanyName(trimmed);
@@ -117,6 +257,22 @@ const findOrCreateCompany = async (name) => {
   }
   return company;
 };
+
+// Multi-value cell separators for bulk-upload files:
+//   profiles   -> separated by ";"  (e.g. "SDE; Data Analyst")
+//   pocRemarks -> separated by "|"  (e.g. "First call done | Follow up next week")
+// A comma cannot be used since it is the CSV column separator.
+const splitProfilesCell = (value) =>
+  String(value || "")
+    .split(";")
+    .map((profile) => profile.trim())
+    .filter(Boolean);
+
+const splitRemarksCell = (value) =>
+  String(value || "")
+    .split("|")
+    .map((remark) => remark.trim())
+    .filter(Boolean);
 
 // Create a listing (with its `listed` event) for a parsed company entry.
 const createListingForEntry = async ({ entry, user }) => {
@@ -131,15 +287,16 @@ const createListingForEntry = async ({ entry, user }) => {
   const importedRemarkTexts = [];
   for (const poc of entry.pocs || []) {
     const name = String(poc?.name || "").trim();
+    // Nameless contacts are never saved; confirm validation rejects them.
+    if (!name) continue;
     const email = String(poc?.email || "").trim().toLowerCase();
-    if (!name && !email) continue;
     cleanedPocs.push({
-      name: name || "Unnamed contact",
+      name,
       email: email || undefined,
       phone: String(poc?.phone || "").trim() || undefined,
       status: VALID_STATUSES.includes(poc?.status) ? poc.status : "yet to contact",
     });
-    importedRemarkTexts.push(String(poc?.remarks || "").trim());
+    importedRemarkTexts.push(splitRemarksCell(poc?.remarks));
   }
 
   const listing = new Listing({
@@ -156,10 +313,10 @@ const createListingForEntry = async ({ entry, user }) => {
 
   appendEvent(listing, "listed", user);
   listing.pocs.forEach((poc, index) => {
-    if (importedRemarkTexts[index]) {
+    for (const text of importedRemarkTexts[index] || []) {
       appendEvent(listing, "remark-added", user, {
         poc: poc._id,
-        text: importedRemarkTexts[index],
+        text,
       });
     }
   });
@@ -190,39 +347,69 @@ const validateFile = (file) => {
 async function parseCSV(filePath) {
   return new Promise((resolve, reject) => {
     const companiesMap = new Map();
+    const ungrouped = [];
+    let headerRow = null;
+    let rowNumber = 1; // header is row 1
 
     fs.createReadStream(filePath)
-      .pipe(csv())
+      .pipe(csv({ mapHeaders: ({ header }) => String(header).replace(/^\uFEFF/, '').trim() }))
+      .on('headers', (headers) => {
+        headerRow = headers;
+      })
       .on('data', (data) => {
-        const companyName = data.companyName?.trim();
-        if (!companyName) return;
-
-        const profile = data.profiles?.trim();
+        rowNumber += 1;
+        const companyName = data.companyName?.trim() || '';
         const poc = {
-          name: data.pocName?.trim(),
-          email: data.pocEmail?.trim(),
-          phone: data.pocPhone?.trim(),
-          status: (data.pocStatus || 'yet to contact').trim().toLowerCase(),
+          name: data.pocName?.trim() || '',
+          email: data.pocEmail?.trim() || '',
+          phone: data.pocPhone?.trim() || '',
+          status: String(data.pocStatus || '').trim().toLowerCase(),
           remarks: data.pocRemarks?.trim() || '',
+          rowNumber,
         };
+        const pocHasContent = poc.name || poc.email || poc.phone || poc.remarks;
+        const profiles = splitProfilesCell(data.profiles);
+
+        // Rows without a company name can't be grouped; keep them so the
+        // user can fix them in the review step instead of dropping silently.
+        if (!companyName) {
+          ungrouped.push({
+            name: '',
+            profiles,
+            pocs: pocHasContent ? [poc] : [],
+            rowNumbers: [rowNumber],
+          });
+          return;
+        }
 
         if (!companiesMap.has(companyName)) {
-          companiesMap.set(companyName, { name: companyName, profiles: [], pocs: [] });
+          companiesMap.set(companyName, { name: companyName, profiles: [], pocs: [], rowNumbers: [] });
         }
 
         const company = companiesMap.get(companyName);
+        company.rowNumbers.push(rowNumber);
 
-        // Add profile if not empty or duplicate
-        if (profile && !company.profiles.includes(profile)) {
-          company.profiles.push(profile);
+        // Add profiles (a cell may hold several, separated by ";")
+        for (const profile of profiles) {
+          if (!company.profiles.includes(profile)) {
+            company.profiles.push(profile);
+          }
         }
 
-        // Add POC if email is provided and not already added
-        if (poc.email && !company.pocs.find(p => p.email === poc.email)) {
+        // Keep any POC with content; validity is flagged at preview time.
+        if (pocHasContent && !company.pocs.find(p => p.email && poc.email && p.email === poc.email)) {
           company.pocs.push(poc);
         }
       })
-      .on('end', () => resolve(Array.from(companiesMap.values())))
+      .on('end', () => {
+        try {
+          assertUploadHeaders(headerRow);
+        } catch (headerError) {
+          reject(headerError);
+          return;
+        }
+        resolve([...companiesMap.values(), ...ungrouped]);
+      })
       .on('error', reject);
   });
 }
@@ -233,32 +420,36 @@ async function parseExcel(filePath) {
   const workbook = xlsx.readFile(filePath);
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
+  const rawRows = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+
+  const headerRow = (rawRows[0] || []).map((cell) => String(cell));
+  assertUploadHeaders(headerRow);
+
   const data = xlsx.utils.sheet_to_json(worksheet);
 
-  return data.map(row => {
-    const company = {
-      name: row.name || row.companyName || row['company name'] || '',
-      profiles: [],
-      pocs: [],
-    };
-
-    if (row.profiles) {
-      const separator = row.profiles.includes(';') ? ';' : ',';
-      company.profiles = row.profiles.split(separator).map(p => p.trim());
-    }
-
-    if (row.pocName || row['poc name']) {
-      company.pocs.push({
-        name: row.pocName || row['poc name'],
-        email: row.pocEmail || '',
-        phone: row.pocPhone || '',
-        status: row.pocStatus || 'yet to contact',
+  return data
+    .map((row, index) => {
+      const rowNumber = index + 2; // header is row 1
+      const poc = {
+        name: String(row.pocName || row['poc name'] || '').trim(),
+        email: String(row.pocEmail || row['poc email'] || '').trim(),
+        phone: String(row.pocPhone || row['poc phone'] || '').trim(),
+        status: String(row.pocStatus || row['poc status'] || '').trim().toLowerCase(),
         remarks: String(row.pocRemarks || row['poc remarks'] || '').trim(),
-      });
-    }
+        rowNumber,
+      };
+      const pocHasContent = poc.name || poc.email || poc.phone || poc.remarks;
 
-    return company.name ? company : null;
-  }).filter(Boolean);
+      return {
+        name: String(row.name || row.companyName || row['company name'] || '').trim(),
+        profiles: row.profiles
+          ? String(row.profiles).split(String(row.profiles).includes(';') ? ';' : ',').map(p => p.trim()).filter(Boolean)
+          : [],
+        pocs: pocHasContent ? [poc] : [],
+        rowNumbers: [rowNumber],
+      };
+    })
+    .filter((company) => company.name || company.pocs.length > 0 || company.profiles.length > 0);
 }
 
 const app = express();
@@ -543,18 +734,103 @@ apiRouter.post('/api/add-companies', authGuard, async (req, res) => {
   }
 });
 
-// Add companies with file
-apiRouter.post('/api/add-company-with-file', authGuard, async (req, res) => {
+// Shared ingestion: merge parsed entries into existing listings or create new
+// ones. Used by the file-confirm endpoint (and the legacy direct-upload one).
+const ingestCompanyEntries = async ({ entries, user }) => {
+  const savedListings = [];
+
+  for (const entry of entries) {
+    const companyDoc = await Company.findOne({
+      nameNormalized: normalizeCompanyName(entry.name),
+    }).select('_id');
+    const existingListing = companyDoc
+      ? await Listing.findOne({ company: companyDoc._id })
+      : null;
+
+    if (existingListing) {
+      // Merge into the existing listing: union profiles, add unseen POCs.
+      const mergedProfiles = [
+        ...new Set([...(existingListing.profiles || []), ...(entry.profiles || [])]),
+      ];
+      const profilesChanged =
+        mergedProfiles.length !== (existingListing.profiles || []).length;
+      if (profilesChanged) {
+        existingListing.profiles = mergedProfiles;
+        appendEvent(existingListing, 'profiles-updated', user, { profiles: mergedProfiles });
+      }
+
+      const existingEmails = new Set(
+        existingListing.pocs.map((poc) => String(poc.email || '').toLowerCase()).filter(Boolean)
+      );
+      for (const poc of entry.pocs || []) {
+        const email = String(poc?.email || '').trim().toLowerCase();
+        const name = String(poc?.name || '').trim();
+        if (!name || (email && existingEmails.has(email))) continue;
+        existingListing.pocs.push({
+          name,
+          email: email || undefined,
+          phone: String(poc.phone || '').trim() || undefined,
+          status: VALID_STATUSES.includes(poc.status) ? poc.status : 'yet to contact',
+        });
+        appendEvent(existingListing, 'poc-added', user, {
+          poc: existingListing.pocs[existingListing.pocs.length - 1]._id,
+          pocName: poc.name,
+        });
+      }
+
+      await existingListing.save();
+      await existingListing.populate(LISTING_POPULATE);
+      savedListings.push(existingListing);
+    } else {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await createListingForEntry({ entry, user });
+      if (result.listing) {
+        savedListings.push(result.listing);
+      }
+    }
+  }
+
+  return savedListings;
+};
+
+const parseUploadedFile = async (file) => {
+  const filePath = path.join(tempDir, `${Date.now()}-${file.name}`);
+  await file.mv(filePath);
+
+  try {
+    const fileExtension = path.extname(file.name).toLowerCase();
+    if (fileExtension === '.csv') {
+      return await parseCSV(filePath);
+    }
+    if (['.xlsx', '.xls'].includes(fileExtension)) {
+      return await parseExcel(filePath);
+    }
+    return [];
+  } finally {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  }
+};
+
+const requireUploadPermission = (user, res) => {
+  if (user.role === 'sc') {
+    res.status(403).json({ success: false, message: 'SC users cannot upload companies' });
+    return false;
+  }
+  if (!user || !user._id) {
+    res.status(400).json({ message: 'User is not authenticated' });
+    return false;
+  }
+  return true;
+};
+
+// Step 1 of bulk upload: parse + validate the file and return a preview.
+// Nothing is written to the database here.
+apiRouter.post('/api/preview-company-file', authGuard, async (req, res) => {
   try {
     const user = req.user;
-
-    if (user.role === 'sc') {
-      return res.status(403).json({ success: false, message: 'SC users cannot upload companies' });
-    }
-
-    if (!user || !user._id) {
-      return res.status(400).json({ message: 'User is not authenticated' });
-    }
+    if (!requireUploadPermission(user, res)) return;
 
     if (!req.files || !req.files.file) {
       return res.status(400).json({ message: 'No file uploaded' });
@@ -562,80 +838,136 @@ apiRouter.post('/api/add-company-with-file', authGuard, async (req, res) => {
 
     const file = req.files.file;
     const validation = validateFile(file);
-
     if (!validation.isValid) {
       return res.status(400).json({ message: validation.message });
     }
 
-    const filePath = path.join(tempDir, file.name);
-    await file.mv(filePath);
-
-    let companies = [];
-    const fileExtension = path.extname(file.name).toLowerCase();
-
-    if (fileExtension === '.csv') {
-      companies = await parseCSV(filePath);
-    } else if (['.xlsx', '.xls'].includes(fileExtension)) {
-      companies = await parseExcel(filePath);
-    }
-
-    fs.unlinkSync(filePath);
+    const companies = await parseUploadedFile(file);
 
     if (!companies.length) {
       return res.status(400).json({ message: 'No valid company data found in file' });
     }
 
-    const savedListings = [];
+    const preview = await buildUploadPreview(companies);
+    const blocked = preview.filter((entry) => !entry.canImport).length;
 
-    for (const entry of companies) {
-      const existingListing = await Listing.findOne({
-        company: await Company.findOne({ nameNormalized: normalizeCompanyName(entry.name) }).select('_id'),
-      });
-
-      if (existingListing) {
-        // Merge into the existing listing: union profiles, add unseen POCs.
-        const mergedProfiles = [
-          ...new Set([...(existingListing.profiles || []), ...(entry.profiles || [])]),
-        ];
-        const profilesChanged =
-          mergedProfiles.length !== (existingListing.profiles || []).length;
-        if (profilesChanged) {
-          existingListing.profiles = mergedProfiles;
-          appendEvent(existingListing, 'profiles-updated', user, { profiles: mergedProfiles });
-        }
-
-        const existingEmails = new Set(
-          existingListing.pocs.map((poc) => String(poc.email || '').toLowerCase()).filter(Boolean)
-        );
-        for (const poc of entry.pocs || []) {
-          const email = String(poc?.email || '').trim().toLowerCase();
-          if (!email || existingEmails.has(email)) continue;
-          existingListing.pocs.push({
-            name: String(poc.name || 'Unnamed contact').trim(),
-            email,
-            phone: String(poc.phone || '').trim() || undefined,
-            status: VALID_STATUSES.includes(poc.status) ? poc.status : 'yet to contact',
-          });
-          appendEvent(existingListing, 'poc-added', user, {
-            poc: existingListing.pocs[existingListing.pocs.length - 1]._id,
-            pocName: poc.name,
-          });
-        }
-
-        await existingListing.save();
-        await existingListing.populate(LISTING_POPULATE);
-        savedListings.push(existingListing);
-      } else {
-        // eslint-disable-next-line no-await-in-loop
-        const result = await createListingForEntry({ entry, user });
-        if (result.listing) {
-          savedListings.push(result.listing);
-        }
-      }
+    res.status(200).json({
+      success: true,
+      message:
+        blocked > 0
+          ? `Found ${preview.length} companies in file — ${blocked} need${blocked === 1 ? 's' : ''} details before they can be added`
+          : `Found ${preview.length} companies in file`,
+      preview,
+    });
+  } catch (error) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ success: false, message: error.message });
     }
+    console.error('Error previewing companies file', error);
+    res.status(500).json({ message: 'Internal server error', error: error.message });
+  }
+});
+
+// Step 2 of bulk upload: persist the previously previewed entries after the
+// user accepts them.
+apiRouter.post('/api/confirm-company-upload', authGuard, async (req, res) => {
+  try {
+    const user = req.user;
+    if (!requireUploadPermission(user, res)) return;
+
+    const { companies } = req.body || {};
+    if (!Array.isArray(companies) || companies.length === 0) {
+      return res.status(400).json({ success: false, message: 'No companies to import' });
+    }
+
+    const sanitized = companies.map((entry) => ({
+      name: String(entry?.name || '').trim(),
+      profiles: Array.isArray(entry?.profiles) ? entry.profiles : [],
+      pocs: Array.isArray(entry?.pocs) ? entry.pocs : [],
+    }));
+
+    const problems = [];
+    sanitized.forEach((entry, index) => {
+      const label = entry.name || `Entry ${index + 1}`;
+      if (!entry.name) {
+        problems.push(`${label}: missing company name`);
+      }
+      const profiles = (entry.profiles || []).map((p) => String(p || '').trim()).filter(Boolean);
+      if (!profiles.length) {
+        problems.push(`${label}: add at least one profile`);
+      }
+      (entry.pocs || []).forEach((poc, pocIndex) => {
+        if (!String(poc?.name || '').trim()) {
+          problems.push(`${label}, contact ${pocIndex + 1}: contact name is required`);
+        }
+      });
+    });
+
+    if (problems.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please fill in the missing details before accepting.',
+        problems,
+      });
+    }
+
+    if (!sanitized.length) {
+      return res.status(400).json({ success: false, message: 'No valid company data to import' });
+    }
+
+    const savedListings = await ingestCompanyEntries({ entries: sanitized, user });
+
+    res.status(201).json({
+      success: true,
+      message: `Successfully added ${savedListings.length} companies`,
+      companies: savedListings.map((listing) => serializeListing(listing)),
+    });
+  } catch (error) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: 'One of these companies was added by another user. Please review and try again.',
+      });
+    }
+    console.error('Error confirming companies upload', error);
+    res.status(500).json({ message: 'Internal server error', error: error.message });
+  }
+});
+
+// Legacy direct upload (parses and saves in one step). Kept for older cached
+// frontend bundles; the UI now uses preview + confirm instead.
+apiRouter.post('/api/add-company-with-file', authGuard, async (req, res) => {
+  try {
+    const user = req.user;
+    if (!requireUploadPermission(user, res)) return;
+
+    if (!req.files || !req.files.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const file = req.files.file;
+    const validation = validateFile(file);
+    if (!validation.isValid) {
+      return res.status(400).json({ message: validation.message });
+    }
+
+    const companies = await parseUploadedFile(file);
+
+    if (!companies.length) {
+      return res.status(400).json({ message: 'No valid company data found in file' });
+    }
+
+    const savedListings = await ingestCompanyEntries({ entries: companies, user });
 
     res.status(201).json({ message: `Successfully added ${savedListings.length} companies`, companies: savedListings.map((listing) => serializeListing(listing)) });
   } catch (error) {
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    console.error('Error uploading companies file', error);
     res.status(500).json({ message: 'Internal server error', error: error.message });
   }
 });
