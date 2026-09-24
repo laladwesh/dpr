@@ -48,8 +48,7 @@ const UPLOAD_HEADERS = [
   "pocName",
   "pocEmail",
   "pocPhone",
-  "pocStatus",
-  "pocRemarks",
+  "otherRemarks",
 ];
 
 const normalizeHeader = (value) =>
@@ -160,8 +159,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Annotate parsed upload entries with per-row / per-contact issues so the
 // user can fix them in the browser before accepting. Blocking ("error")
 // issues must be resolved or the row removed before import.
-const buildUploadPreview = async (entries) => {
+const buildUploadPreview = async (entries, user) => {
   const preview = [];
+  const statusLockedForUploader = user?.role === 'dpr';
 
   for (const entry of entries || []) {
     const name = String(entry?.name || '').trim();
@@ -190,8 +190,13 @@ const buildUploadPreview = async (entries) => {
       };
 
       const rawStatus = String(poc?.status || '').trim().toLowerCase();
-      cleaned.status = VALID_STATUSES.includes(rawStatus) ? rawStatus : 'yet to contact';
-      if (rawStatus && cleaned.status !== rawStatus) {
+      cleaned.status = resolveAddedPocStatus(user, rawStatus);
+      if (statusLockedForUploader && rawStatus && rawStatus !== 'yet to contact') {
+        cleaned.issues.push({
+          level: 'warning',
+          message: 'Status is managed by coordinators — will be saved as "yet to contact".',
+        });
+      } else if (rawStatus && cleaned.status !== rawStatus) {
         cleaned.issues.push({
           level: 'warning',
           message: `Unknown status "${poc.status}" — will be saved as "yet to contact".`,
@@ -260,7 +265,7 @@ const findOrCreateCompany = async (name) => {
 
 // Multi-value cell separators for bulk-upload files:
 //   profiles   -> separated by ";"  (e.g. "SDE; Data Analyst")
-//   pocRemarks -> separated by "|"  (e.g. "First call done | Follow up next week")
+//   otherRemarks -> separated by "|"  (e.g. "First call done | Follow up next week")
 // A comma cannot be used since it is the CSV column separator.
 const splitProfilesCell = (value) =>
   String(value || "")
@@ -273,6 +278,14 @@ const splitRemarksCell = (value) =>
     .split("|")
     .map((remark) => remark.trim())
     .filter(Boolean);
+
+// DPR users may not set contact status on add; coordinators manage it.
+// Everyone else's explicit status is honored.
+const resolveAddedPocStatus = (user, rawStatus) => {
+  if (user?.role === 'dpr') return 'yet to contact';
+  const normalized = String(rawStatus || '').trim().toLowerCase();
+  return VALID_STATUSES.includes(normalized) ? normalized : 'yet to contact';
+};
 
 // Create a listing (with its `listed` event) for a parsed company entry.
 const createListingForEntry = async ({ entry, user }) => {
@@ -294,7 +307,7 @@ const createListingForEntry = async ({ entry, user }) => {
       name,
       email: email || undefined,
       phone: String(poc?.phone || "").trim() || undefined,
-      status: VALID_STATUSES.includes(poc?.status) ? poc.status : "yet to contact",
+      status: resolveAddedPocStatus(user, poc?.status),
     });
     importedRemarkTexts.push(splitRemarksCell(poc?.remarks));
   }
@@ -363,8 +376,8 @@ async function parseCSV(filePath) {
           name: data.pocName?.trim() || '',
           email: data.pocEmail?.trim() || '',
           phone: data.pocPhone?.trim() || '',
-          status: String(data.pocStatus || '').trim().toLowerCase(),
-          remarks: data.pocRemarks?.trim() || '',
+          status: 'yet to contact',
+          remarks: data.otherRemarks?.trim() || '',
           rowNumber,
         };
         const pocHasContent = poc.name || poc.email || poc.phone || poc.remarks;
@@ -434,8 +447,8 @@ async function parseExcel(filePath) {
         name: String(row.pocName || row['poc name'] || '').trim(),
         email: String(row.pocEmail || row['poc email'] || '').trim(),
         phone: String(row.pocPhone || row['poc phone'] || '').trim(),
-        status: String(row.pocStatus || row['poc status'] || '').trim().toLowerCase(),
-        remarks: String(row.pocRemarks || row['poc remarks'] || '').trim(),
+        status: 'yet to contact',
+        remarks: String(row.otherRemarks || row['other remarks'] || '').trim(),
         rowNumber,
       };
       const pocHasContent = poc.name || poc.email || poc.phone || poc.remarks;
@@ -460,7 +473,13 @@ connectDB();
 
 // Middleware setup
 app.use(`${BASE_PATH}/admin`, adminRouter);
-app.use(fUpload({ useTempFiles: true, tempFileDir: '/tmp/' }));
+app.use(fUpload({
+  useTempFiles: true,
+  tempFileDir: '/tmp/',
+  limits: { fileSize: 25 * 1024 * 1024 },
+  abortOnLimit: true,
+  responseOnLimit: 'File too large. Maximum upload size is 25MB.',
+}));
 const allowedOrigins = [
   process.env.FRONTEND_URL || "http://localhost:5173",
   "https://ccd-industry.vercel.app",
@@ -770,7 +789,7 @@ const ingestCompanyEntries = async ({ entries, user }) => {
           name,
           email: email || undefined,
           phone: String(poc.phone || '').trim() || undefined,
-          status: VALID_STATUSES.includes(poc.status) ? poc.status : 'yet to contact',
+          status: resolveAddedPocStatus(user, poc.status),
         });
         appendEvent(existingListing, 'poc-added', user, {
           poc: existingListing.pocs[existingListing.pocs.length - 1]._id,
@@ -848,7 +867,7 @@ apiRouter.post('/api/preview-company-file', authGuard, async (req, res) => {
       return res.status(400).json({ message: 'No valid company data found in file' });
     }
 
-    const preview = await buildUploadPreview(companies);
+    const preview = await buildUploadPreview(companies, user);
     const blocked = preview.filter((entry) => !entry.canImport).length;
 
     res.status(200).json({
@@ -1217,6 +1236,16 @@ apiRouter.post('/api/update-poc-remarks', authGuard, async (req, res) => {
 });
 
 app.use(BASE_PATH, apiRouter);
+
+// Never leak stack traces / internals on malformed input: Express's default
+// error handler returns HTML with a stack trace when NODE_ENV is unset.
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    return res.status(400).json({ success: false, message: 'Malformed JSON in request body' });
+  }
+  console.error('Unhandled request error', err);
+  return res.status(500).json({ success: false, message: 'Internal server error' });
+});
 
 // Serve the built frontend (single-container deploy: copied into ./public at build time)
 if (hasClientBuild) {
