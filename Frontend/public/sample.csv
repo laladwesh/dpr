@@ -1,6 +1,6 @@
-companyName,profiles,pocName,pocEmail,pocPhone,pocStatus,pocRemarks
-Acme Corporation,Software Engineer; Data Analyst,Jane Doe,jane.doe@acme.com,9876543210,yet to contact,Met at the placement drive and shared the brochure | Asked to follow up next week
-Acme Corporation,Data Analyst,John Smith,john.smith@acme.com,9876543211,ongoing,Follow-up call scheduled for next week
-Globex Inc,Embedded Engineer,Priya Nair,priya.nair@globex.io,9000000001,first email sent,Introductory email sent with the company deck
-Globex Inc,Embedded Engineer,Rahul Verma,rahul.verma@globex.io,9000000002,follow up sent,Sent a reminder after one week of no response | They asked for the internship policy document
-Initech LLC,Frontend Developer,Peter Gibbons,peter@initech.com,9111111111,yet to contact,
+companyName,profiles,pocName,pocEmail,pocPhone,otherRemarks
+Acme Corporation,Software Engineer; Data Analyst,Jane Doe,jane.doe@acme.com,9876543210,Met at the placement drive and shared the brochure | Asked to follow up next week
+Acme Corporation,Data Analyst,John Smith,john.smith@acme.com,9876543211,Follow-up call scheduled for next week
+Globex Inc,Embedded Engineer,Priya Nair,priya.nair@globex.io,9000000001,Introductory email sent with the company deck
+Globex Inc,Embedded Engineer,Rahul Verma,rahul.verma@globex.io,9000000002,Sent a reminder after one week of no response | They asked for the internship policy document
+Initech LLC,Frontend Developer,Peter Gibbons,peter@initech.com,9111111111,

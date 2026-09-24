@@ -183,9 +183,11 @@ const FileUpload = () => {
     setIsUploading(true);
     try {
       const response = await toast.promise(
+        // NOTE: do NOT set Content-Type manually here — the browser must
+        // generate the multipart boundary itself, otherwise the server
+        // cannot parse the file.
         axios.post(buildApiUrl("/api/preview-company-file"), formData, {
           withCredentials: true,
-          headers: { "Content-Type": "multipart/form-data" },
         }),
         {
           loading: "Reading and validating file...",
@@ -301,7 +303,8 @@ const FileUpload = () => {
               <p className="text-xs text-slate-400">CSV, XLSX, or XLS — up to 25MB</p>
               <p className="text-xs text-slate-400">
                 One row per contact. Separate multiple profiles with <code className="rounded bg-slate-100 px-1 font-semibold text-slate-600">;</code> and
-                multiple remarks with <code className="rounded bg-slate-100 px-1 font-semibold text-slate-600">|</code>
+                multiple remarks with <code className="rounded bg-slate-100 px-1 font-semibold text-slate-600">|</code>.
+                Contact status is managed by coordinators and always starts as “Yet to contact”.
               </p>
               <input
                 type="file"
@@ -503,18 +506,11 @@ const FileUpload = () => {
                                 disabled={isConfirming}
                                 className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 transition-colors"
                               />
-                              <select
-                                value={poc.status}
-                                onChange={(e) => updateDraftPoc(company._key, pIndex, { status: e.target.value })}
-                                disabled={isConfirming}
-                                className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 transition-colors"
-                              >
-                                {STATUS_OPTIONS.map((status) => (
-                                  <option key={status} value={status}>
-                                    {status.charAt(0).toUpperCase() + status.slice(1)}
-                                  </option>
-                                ))}
-                              </select>
+                              <div className="flex items-center rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm" title="Status is managed by coordinators">
+                                <span className="inline-flex items-center rounded-md bg-slate-200 px-2 py-0.5 text-xs font-bold text-slate-700">
+                                  Yet to contact
+                                </span>
+                              </div>
                             </div>
                             <textarea
                               value={poc.remarks}
